@@ -1,16 +1,8 @@
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 
-use eframe::App;
 use gui::TheMan;
-use libp2p::{
-    core::{muxing::StreamMuxerBox, transport::Boxed},
-    identity::{Keypair, PublicKey},
-    kad::{store::MemoryStore, Kademlia, KademliaConfig},
-    multiaddr::Protocol,
-    swarm::SwarmBuilder,
-    Multiaddr, PeerId, Swarm,
-};
-use logic::message::Message;
+use libp2p::identity::Keypair;
+use logic::{message::Message, TheManLogic};
 use save_state::TheManSaveState;
 use state::TheManState;
 
@@ -23,7 +15,7 @@ pub mod state;
 async fn main() {
     env_logger::init();
 
-    let mut logic: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>> = Arc::new(Mutex::new(None));
+    let logic: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>> = Arc::new(Mutex::new(None));
     let lo = logic.clone();
 
     eframe::run_native(
@@ -76,7 +68,9 @@ async fn main() {
 
             *lo.lock().unwrap() = Some(tokio::spawn(async{
                 let state:TheManState = state.into();
-                logic::run(state, gui_sender, gui_reciver).await}
+                let logic = TheManLogic::new(state, gui_sender, gui_reciver);
+                logic.run().await;
+                }
             ));
 
             drop(lo);

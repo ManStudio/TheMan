@@ -1,4 +1,4 @@
-use std::{collections::HashMap, num::NonZeroUsize, time::Duration};
+use std::{collections::HashMap, time::Duration};
 
 use libp2p::{
     identity::Keypair,
@@ -43,7 +43,7 @@ impl From<TheManSaveState> for TheManState {
         		"/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ".parse().unwrap(),
         		"/ip4/104.131.131.82/udp/4001/quic/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ".parse().unwrap()]);
 
-            for mut node in value.nodes {
+            for node in value.nodes {
                 let Some(protocol) = node.iter().last() else {continue};
                 let Protocol::P2p(id) = protocol else {continue};
                 let Ok(peer_id) = PeerId::from_multihash(id)else{continue};
@@ -90,8 +90,6 @@ impl From<TheManSaveState> for TheManState {
         };
 
         let ping = { libp2p::ping::Behaviour::new(libp2p::ping::Config::new()) };
-
-        let bitswap = {};
 
         let transport = libp2p::tokio_development_transport(keypair.clone()).unwrap();
         let swarm = SwarmBuilder::with_tokio_executor(

@@ -1,14 +1,12 @@
 use std::collections::HashMap;
 
 use libp2p::{
-    core::PeerId,
     identify::Info,
     identity::Keypair,
     kad::{store::MemoryStore, Kademlia, KademliaEvent},
-    swarm::{behaviour, NetworkBehaviour},
-    Swarm,
+    swarm::NetworkBehaviour,
+    PeerId, Swarm,
 };
-use std::sync::{Arc, RwLock};
 
 #[derive(Default, Debug)]
 pub struct PeerStatus {
@@ -25,14 +23,12 @@ impl Clone for PeerStatus {
                 Some(res) => match res {
                     Ok(ok) => match ok {
                         Success::Pong => Some(Result::Ok(Success::Pong)),
-                        Success::Ping { rtt } => {
-                            Some(Result::Ok(Success::Ping { rtt: rtt.clone() }))
-                        }
+                        Success::Ping { rtt } => Some(Result::Ok(Success::Ping { rtt: *rtt })),
                     },
                     Err(err) => match err {
                         Failure::Timeout => Some(Result::Err(Failure::Timeout)),
                         Failure::Unsupported => Some(Result::Err(Failure::Unsupported)),
-                        Failure::Other { error } => Some(Result::Err(Failure::Unsupported)),
+                        Failure::Other { .. } => Some(Result::Err(Failure::Unsupported)),
                     },
                 },
                 None => None,

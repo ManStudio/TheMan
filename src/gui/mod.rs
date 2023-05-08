@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, RwLock},
-    time::Duration,
-};
+use std::time::Duration;
 
 use eframe::egui;
 use libp2p::{kad::kbucket::NodeStatus, Multiaddr, PeerId};
@@ -44,8 +40,8 @@ impl TheMan {
             match message {
                 Message::SwarmStatus(status) => {
                     self.state.kademlia_status = Some(status);
-                    self.sender.try_send(Message::GetBootNodes);
-                    self.sender.try_send(Message::GetPeers);
+                    let _ = self.sender.try_send(Message::GetBootNodes);
+                    let _ = self.sender.try_send(Message::GetPeers);
                 }
                 Message::SaveResponse(res) => self.state.save = Some(res),
                 Message::BootNodes(nodes) => self.state.bootnodes = nodes,
@@ -56,7 +52,7 @@ impl TheMan {
     }
 }
 impl eframe::App for TheMan {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.one_time {
             self.one_time = true;
         }
@@ -89,7 +85,7 @@ impl eframe::App for TheMan {
                 .show(ui.ctx(), |ui| {
                     ui.horizontal(|ui| {
                         if ui.button("Refresh").clicked() {
-                            self.sender.try_send(Message::GetBootNodes);
+                            let _ = self.sender.try_send(Message::GetBootNodes);
                         }
                         ui.label(format!("Nodes: {}", self.state.bootnodes.len()));
                     });
@@ -115,7 +111,7 @@ impl eframe::App for TheMan {
                 .show(ui.ctx(), |ui| {
                     ui.horizontal(|ui| {
                         if ui.button("Refresh").clicked() {
-                            self.sender.try_send(Message::GetBootNodes);
+                            let _ = self.sender.try_send(Message::GetBootNodes);
                         }
                         ui.label(format!("Peers: {}", self.state.peers.len()));
                     });
@@ -127,7 +123,7 @@ impl eframe::App for TheMan {
                         |ui, range| {
                             let peers = &self.state.peers;
                             for i in range {
-                                if let Some(peer) = peers.iter().nth(i) {
+                                if let Some(peer) = peers.get(i) {
                                     ui.horizontal(|ui| {
                                         ui.label(format!("PeerId: {}", peer.0));
                                         ui.label(format!("Ping: {:?}", peer.1.ping));
