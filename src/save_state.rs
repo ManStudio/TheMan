@@ -1,4 +1,4 @@
-use std::{num::NonZeroUsize, time::Duration};
+use std::{collections::HashMap, num::NonZeroUsize, time::Duration};
 
 use libp2p::{
     identity::Keypair,
@@ -22,7 +22,6 @@ impl From<TheManSaveState> for TheManState {
         let peer_id = PeerId::from(keypair.public());
 
         let kademlia = {
-            let transport = libp2p::tokio_development_transport(keypair.clone()).unwrap();
             let mut cfg = KademliaConfig::default();
             cfg.set_query_timeout(Duration::from_secs(5 * 60));
             let store = MemoryStore::with_config(
@@ -51,13 +50,70 @@ impl From<TheManSaveState> for TheManState {
                 log::debug!("Adding BOOTNODE to kademlia: {node}/p2p/{protocol}");
                 behaviour.add_address(&peer_id, node);
             }
-            SwarmBuilder::with_tokio_executor(transport, behaviour, peer_id).build()
+            behaviour
         };
+
+        let identify = {
+            let config = libp2p::identify::Config::new("theman/1.0.0".into(), keypair.public());
+            libp2p::identify::Behaviour::new(config)
+        };
+
+        let mdns = {
+            libp2p::mdns::tokio::Behaviour::new(
+                libp2p::mdns::Config {
+                    ttl: Duration::from_secs(10),
+                    query_interval: Duration::from_secs(1),
+                    enable_ipv6: false,
+                },
+                peer_id,
+            )
+            .unwrap()
+        };
+
+        let gossipsub = {
+            let config = libp2p::gossipsub::Config::default();
+            libp2p::gossipsub::Behaviour::new(
+                libp2p::gossipsub::MessageAuthenticity::Signed(keypair.clone()),
+                config,
+            )
+            .unwrap()
+        };
+
+        let autonat = {
+            let config = libp2p::autonat::Config::default();
+            libp2p::autonat::Behaviour::new(peer_id, config)
+        };
+
+        let relay = {
+            let config = libp2p::relay::Config::default();
+            libp2p::relay::Behaviour::new(peer_id, config)
+        };
+
+        let ping = { libp2p::ping::Behaviour::new(libp2p::ping::Config::new()) };
+
+        let bitswap = {};
+
+        let transport = libp2p::tokio_development_transport(keypair.clone()).unwrap();
+        let swarm = SwarmBuilder::with_tokio_executor(
+            transport,
+            crate::state::TheManBehaviour {
+                kademlia,
+                identify,
+                mdns,
+                gossipsub,
+                autonat,
+                relay,
+                ping,
+            },
+            peer_id,
+        )
+        .build();
 
         Self {
             peer_id,
             keypair,
-            kademlia,
+            swarm,
+            peers: HashMap::new(),
         }
     }
 }
