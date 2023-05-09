@@ -26,6 +26,8 @@ pub enum Message {
     UpdateAccounts(Vec<Account>),
     GetAdresses,
     Adresses(Vec<AddressRecord>),
+    SearchPeerId(PeerId),
+    ResSearchPeerId(),
     ShutDown,
 }
 
@@ -139,6 +141,15 @@ impl TheManLogic {
                 let _ = self
                     .sender
                     .try_send(Message::Accounts(self.state.accounts.clone()));
+            }
+            Message::SearchPeerId(peer_id) => {
+                if let Some(account) = &mut self.state.account {
+                    let query_id = account
+                        .swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .get_closest_peers(peer_id);
+                }
             }
             _ => {}
         }

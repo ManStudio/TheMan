@@ -2,12 +2,14 @@ use eframe::egui;
 
 mod accounts;
 mod boot_nodes;
+mod discover;
 mod my_self;
 mod peers;
 mod swarm_status;
 
 pub use accounts::TabAccounts;
 pub use boot_nodes::TabBootNodes;
+pub use discover::TabDiscover;
 pub use my_self::TabMySelf;
 pub use peers::TabPeers;
 pub use swarm_status::TabSwarmStatus;

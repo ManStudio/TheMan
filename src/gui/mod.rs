@@ -48,6 +48,7 @@ impl TheMan {
         tab_manager.register::<TabPeers>();
         tab_manager.register::<TabMySelf>();
         tab_manager.register::<TabAccounts>();
+        tab_manager.register::<TabDiscover>();
 
         tab_manager.execute("o0;o1;o2;o3;o4");
 
