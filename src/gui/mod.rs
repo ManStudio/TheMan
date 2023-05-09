@@ -13,6 +13,7 @@ pub struct TheManGuiState {
     pub save: Option<TheManSaveState>,
     pub bootnodes: Vec<(PeerId, NodeStatus, Vec<Multiaddr>)>,
     pub peers: Vec<(PeerId, PeerStatus)>,
+    pub peer_id: Option<PeerId>,
     pub receiver: tokio::sync::mpsc::Receiver<Message>,
     pub sender: tokio::sync::mpsc::Sender<Message>,
 }
@@ -33,8 +34,9 @@ impl TheMan {
         tab_manager.register::<TabSwarmStatus>();
         tab_manager.register::<TabBootNodes>();
         tab_manager.register::<TabPeers>();
+        tab_manager.register::<TabMySelf>();
 
-        tab_manager.execute("o0;o1;o2");
+        tab_manager.execute("o0;o1;o2;o3");
 
         Self {
             state: TheManGuiState {
@@ -44,6 +46,7 @@ impl TheMan {
                 peers: Vec::new(),
                 receiver,
                 sender,
+                peer_id: None,
             },
             should_close: false,
             one_time: false,
@@ -62,6 +65,7 @@ impl TheMan {
                 Message::SaveResponse(res) => self.state.save = Some(res),
                 Message::BootNodes(nodes) => self.state.bootnodes = nodes,
                 Message::Peers(peers) => self.state.peers = peers,
+                Message::Peer(peer_id) => self.state.peer_id = Some(peer_id),
                 _ => {}
             }
         }

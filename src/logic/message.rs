@@ -14,6 +14,7 @@ pub enum Message {
     BootNodes(Vec<(PeerId, NodeStatus, Vec<Multiaddr>)>),
     GetPeers,
     Peers(Vec<(PeerId, PeerStatus)>),
+    Peer(PeerId),
     ShutDown,
 }
 

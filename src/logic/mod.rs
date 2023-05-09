@@ -28,6 +28,7 @@ impl TheManLogic {
         let _ = self
             .sender
             .try_send(Message::SwarmStatus(self.state.swarm.network_info()));
+        let _ = self.sender.try_send(Message::Peer(self.state.peer_id));
 
         let _ = self
             .state
