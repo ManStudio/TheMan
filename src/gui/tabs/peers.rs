@@ -1,12 +1,14 @@
 use eframe::egui;
+use libp2p::PeerId;
 
-use crate::logic::message::Message;
+use crate::{logic::message::Message, state::PeerStatus};
 
 use super::Tab;
 
 #[derive(Default, Clone)]
 pub struct TabPeers {
     id: usize,
+    filter: String,
 }
 
 impl Tab for TabPeers {
@@ -15,15 +17,23 @@ impl Tab for TabPeers {
     }
 
     fn update(&mut self, ui: &mut eframe::egui::Ui, state: &mut crate::gui::TheManGuiState) {
+        let row_height = ui.text_style_height(&egui::TextStyle::Body);
+        let peers = state
+            .peers
+            .iter()
+            .filter(|peer| peer.0.to_string().contains(&self.filter))
+            .collect::<Vec<&(PeerId, PeerStatus)>>();
         ui.horizontal(|ui| {
+            ui.label(format!("Peers: {}", peers.len()));
+            ui.separator();
+            ui.label("Filter");
+            ui.text_edit_singleline(&mut self.filter);
+            ui.separator();
             if ui.button("Refresh").clicked() {
                 let _ = state.sender.try_send(Message::GetBootNodes);
             }
-            ui.label(format!("Peers: {}", state.peers.len()));
         });
-        let row_height = ui.text_style_height(&egui::TextStyle::Body);
-        egui::ScrollArea::both().show_rows(ui, row_height, state.peers.len(), |ui, range| {
-            let peers = &state.peers;
+        egui::ScrollArea::both().show_rows(ui, row_height, peers.len(), |ui, range| {
             for i in range {
                 if let Some(peer) = peers.get(i) {
                     ui.horizontal(|ui| {
