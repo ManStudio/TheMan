@@ -1,7 +1,11 @@
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use eframe::egui;
-use libp2p::{kad::kbucket::NodeStatus, swarm::AddressRecord, Multiaddr, PeerId};
+use libp2p::{
+    kad::{kbucket::NodeStatus, ProgressStep, QueryId, QueryResult, QueryStats},
+    swarm::AddressRecord,
+    Multiaddr, PeerId,
+};
 
 use crate::{
     logic::message::Message,
@@ -22,6 +26,8 @@ pub struct TheManGuiState {
     pub sender: tokio::sync::mpsc::Sender<Message>,
     pub adresses: Vec<AddressRecord>,
     pub accounts: Vec<Account>,
+    pub kademlia_query_progress: HashMap<QueryId, (QueryResult, QueryStats, ProgressStep)>,
+    pub query_id_for_peers: HashMap<PeerId, QueryId>,
 }
 
 impl TheManGuiState {
@@ -63,6 +69,8 @@ impl TheMan {
                 peer_id: None,
                 accounts: Vec::new(),
                 adresses: Vec::new(),
+                kademlia_query_progress: HashMap::new(),
+                query_id_for_peers: HashMap::new(),
             },
             should_close: false,
             one_time: false,
@@ -84,6 +92,14 @@ impl TheMan {
                 Message::Peer(peer_id) => self.state.peer_id = Some(peer_id),
                 Message::Accounts(accounts) => self.state.accounts = accounts,
                 Message::Adresses(adresses) => self.state.adresses = adresses,
+                Message::ResSearchPeerId(peer_id, query_id) => {
+                    self.state.query_id_for_peers.insert(peer_id, query_id);
+                }
+                Message::KademliaQueryProgress(query_id, result, stats, step) => {
+                    self.state
+                        .kademlia_query_progress
+                        .insert(query_id, (result, stats, step));
+                }
                 _ => {}
             }
         }

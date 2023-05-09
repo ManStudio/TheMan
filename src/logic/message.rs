@@ -1,5 +1,8 @@
 use libp2p::{
-    kad::kbucket::NodeStatus, multiaddr::Protocol, swarm::AddressRecord, Multiaddr, PeerId,
+    kad::{kbucket::NodeStatus, ProgressStep, QueryId, QueryResult, QueryStats},
+    multiaddr::Protocol,
+    swarm::AddressRecord,
+    Multiaddr, PeerId,
 };
 
 use crate::{
@@ -27,7 +30,8 @@ pub enum Message {
     GetAdresses,
     Adresses(Vec<AddressRecord>),
     SearchPeerId(PeerId),
-    ResSearchPeerId(),
+    ResSearchPeerId(PeerId, QueryId),
+    KademliaQueryProgress(QueryId, QueryResult, QueryStats, ProgressStep),
     ShutDown,
 }
 
@@ -149,6 +153,9 @@ impl TheManLogic {
                         .behaviour_mut()
                         .kademlia
                         .get_closest_peers(peer_id);
+                    let _ = self
+                        .sender
+                        .try_send(Message::ResSearchPeerId(peer_id, query_id));
                 }
             }
             _ => {}

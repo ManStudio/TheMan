@@ -15,13 +15,27 @@ impl TheManLogic {
                             println!("Request: {request:?}");
                         }
                         libp2p::kad::KademliaEvent::OutboundQueryProgressed {
-                            id, step, ..
+                            id,
+                            step,
+                            result,
+                            stats,
                         } => {
                             if let Some(account) = &mut self.state.account {
-                                if id == self.bootstrap.unwrap() && step.last {
-                                    self.bootstrap = Some(
-                                        account.swarm.behaviour_mut().kademlia.bootstrap().unwrap(),
-                                    );
+                                if id == self.bootstrap.unwrap() {
+                                    if step.last {
+                                        self.bootstrap = Some(
+                                            account
+                                                .swarm
+                                                .behaviour_mut()
+                                                .kademlia
+                                                .bootstrap()
+                                                .unwrap(),
+                                        );
+                                    }
+                                } else {
+                                    let _ = self.sender.try_send(Message::KademliaQueryProgress(
+                                        id, result, stats, step,
+                                    ));
                                 }
                             }
                         }
