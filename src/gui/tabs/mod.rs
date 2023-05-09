@@ -77,12 +77,10 @@ impl TabManager {
 
     pub fn open(&mut self, registered_tab: usize) {
         let Some(tab) = self.registerd_tabs.get(registered_tab) else {eprintln!("Invalid registered tab index!"); return};
-        let mut tab = tab.clone_box();
         let mut used_ids = Vec::new();
-        let test = self
-            .tabs
+        self.tabs
             .iter()
-            .map(|node| {
+            .flat_map(|node| {
                 if let egui_dock::Node::Leaf { tabs, .. } = node {
                     tabs.iter()
                         .filter(|tab2| tab2.name() == tab.name())
@@ -91,7 +89,6 @@ impl TabManager {
                     vec![]
                 }
             })
-            .flatten()
             .for_each(|tab| used_ids.push(tab.id()));
 
         let mut id = 1;
@@ -108,6 +105,7 @@ impl TabManager {
         if self.tabs.is_empty() {
             self.open(0)
         }
+
         let mut tab_viewer = TabViewer {
             registered_tabs: &self.registerd_tabs,
             added_tabs: Vec::new(),
