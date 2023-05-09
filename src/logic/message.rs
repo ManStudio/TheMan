@@ -1,4 +1,6 @@
-use libp2p::{kad::kbucket::NodeStatus, multiaddr::Protocol, Multiaddr, PeerId};
+use libp2p::{
+    kad::kbucket::NodeStatus, multiaddr::Protocol, swarm::AddressRecord, Multiaddr, PeerId,
+};
 
 use crate::{
     save_state::{Account, TheManSaveState},
@@ -21,6 +23,8 @@ pub enum Message {
     SetAccount(usize),
     GetAccounts,
     Accounts(Vec<Account>),
+    GetAdresses,
+    Adresses(Vec<AddressRecord>),
     ShutDown,
 }
 
@@ -111,6 +115,17 @@ impl TheManLogic {
 
                     self.bootstrap =
                         Some(account.swarm.behaviour_mut().kademlia.bootstrap().unwrap());
+                }
+            }
+            Message::GetAdresses => {
+                if let Some(account) = &mut self.state.account {
+                    let adresses = account
+                        .swarm
+                        .external_addresses()
+                        .cloned()
+                        .collect::<Vec<AddressRecord>>();
+
+                    self.sender.try_send(Message::Adresses(adresses));
                 }
             }
             _ => {}

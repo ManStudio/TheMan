@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use eframe::egui;
-use libp2p::{kad::kbucket::NodeStatus, Multiaddr, PeerId};
+use libp2p::{kad::kbucket::NodeStatus, swarm::AddressRecord, Multiaddr, PeerId};
 
 use crate::{
     logic::message::Message,
@@ -20,6 +20,7 @@ pub struct TheManGuiState {
     pub peer_id: Option<PeerId>,
     pub receiver: tokio::sync::mpsc::Receiver<Message>,
     pub sender: tokio::sync::mpsc::Sender<Message>,
+    pub adresses: Vec<AddressRecord>,
     pub accounts: Vec<Account>,
 }
 
@@ -60,6 +61,7 @@ impl TheMan {
                 sender,
                 peer_id: None,
                 accounts: Vec::new(),
+                adresses: Vec::new(),
             },
             should_close: false,
             one_time: false,
@@ -80,6 +82,7 @@ impl TheMan {
                 Message::Peers(peers) => self.state.peers = peers,
                 Message::Peer(peer_id) => self.state.peer_id = Some(peer_id),
                 Message::Accounts(accounts) => self.state.accounts = accounts,
+                Message::Adresses(adresses) => self.state.adresses = adresses,
                 _ => {}
             }
         }
