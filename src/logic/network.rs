@@ -63,7 +63,16 @@ impl TheManLogic {
                         }
                         libp2p::mdns::Event::Expired(_) => todo!(),
                     },
-                    BehaviourEvent::GossIpSub(_event) => {}
+                    BehaviourEvent::GossIpSub(event) => match event {
+                        libp2p::gossipsub::Event::Message {
+                            propagation_source,
+                            message_id,
+                            message,
+                        } => {}
+                        libp2p::gossipsub::Event::Subscribed { peer_id, topic } => {}
+                        libp2p::gossipsub::Event::Unsubscribed { peer_id, topic } => {}
+                        libp2p::gossipsub::Event::GossipsubNotSupported { peer_id } => {}
+                    },
                     BehaviourEvent::AutoNat(event) => match event {
                         libp2p::autonat::Event::InboundProbe(event) => {
                             println!("Inbount: {event:?}")

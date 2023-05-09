@@ -1,5 +1,6 @@
 use eframe::egui;
 
+mod account;
 mod accounts;
 mod boot_nodes;
 mod discover;
@@ -7,6 +8,7 @@ mod my_self;
 mod peers;
 mod swarm_status;
 
+pub use account::TabAccount;
 pub use accounts::TabAccounts;
 pub use boot_nodes::TabBootNodes;
 pub use discover::TabDiscover;
@@ -18,7 +20,9 @@ use super::TheManGuiState;
 
 pub trait Tab {
     fn name(&self) -> &str;
-    fn update(&mut self, ui: &mut egui::Ui, state: &mut TheManGuiState);
+    fn update(&mut self, ui: &mut egui::Ui, state: &mut TheManGuiState) -> Option<String>;
+
+    fn recive(&mut self, message: String);
 
     fn clone_box(&self) -> Box<dyn Tab>;
     fn id(&self) -> usize;
@@ -45,7 +49,7 @@ impl TabManager {
     /// The script should look like `"o0;o1;o2"`
     /// Every command is separated by `;`
     /// Commands:
-    ///     `o(registered_tab: usize)` = what `registered_tab` to open
+    ///     `o(registered_tab: usize, message: String)` = what `registered_tab` to open, `message` what to send
     ///     `f(node: usize)` = what `node` to focus
     ///     `t(node: usize, tab: usize)` = what `tab` to focus in that `node`
     pub fn execute(&mut self, script: &str) {
@@ -57,8 +61,18 @@ impl TabManager {
             match op {
                 'o' => {
                     chars.reverse();
-                    let Ok(num) = String::from_iter(chars).parse::<usize>()else{eprintln!("After o should be a number like: o10"); continue};
-                    self.open(num);
+                    let string = String::from_iter(chars);
+                    let mut values = string.split(',');
+                    let error_message = "After t should be tow numbers separate by , like: o0,";
+                    let Some(num_str) = values.next() else{eprintln!("{error_message}"); continue};
+                    let message = values.collect::<String>();
+                    let Ok(num) = num_str.parse::<usize>() else {eprintln!("{error_message}"); continue};
+
+                    if message.is_empty() {
+                        self.open(num, None);
+                    } else {
+                        self.open(num, Some(message));
+                    }
                 }
                 'f' => {
                     chars.reverse();
@@ -81,7 +95,7 @@ impl TabManager {
         }
     }
 
-    pub fn open(&mut self, registered_tab: usize) {
+    pub fn open(&mut self, registered_tab: usize, message: Option<String>) {
         let Some(tab) = self.registerd_tabs.get(registered_tab) else {eprintln!("Invalid registered tab index!"); return};
         let mut used_ids = Vec::new();
         self.tabs
@@ -104,18 +118,22 @@ impl TabManager {
 
         let mut tab = tab.clone_box();
         tab.set_id(id);
+        if let Some(message) = message {
+            tab.recive(message)
+        }
         self.tabs.push_to_focused_leaf(tab);
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, state: &mut TheManGuiState) {
         if self.tabs.is_empty() {
-            self.open(0)
+            self.open(0, None)
         }
 
         let mut tab_viewer = TabViewer {
             registered_tabs: &self.registerd_tabs,
             added_tabs: Vec::new(),
             state,
+            messages: Vec::new(),
         };
 
         egui_dock::DockArea::new(&mut self.tabs)
@@ -123,10 +141,17 @@ impl TabManager {
             .show_add_popup(true)
             .show_inside(ui, &mut tab_viewer);
 
-        tab_viewer.added_tabs.drain(..).for_each(|(tab, index)| {
+        let messages = tab_viewer.messages;
+        let added_tabs = tab_viewer.added_tabs;
+
+        for message in messages {
+            self.execute(&message);
+        }
+
+        for (tab, index) in added_tabs {
             self.tabs.set_focused_node(index);
-            self.open(tab)
-        });
+            self.open(tab, None)
+        }
     }
 }
 
@@ -134,13 +159,16 @@ pub struct TabViewer<'a> {
     pub registered_tabs: &'a Vec<Box<dyn Tab>>,
     pub added_tabs: Vec<(usize, egui_dock::NodeIndex)>,
     pub state: &'a mut TheManGuiState,
+    pub messages: Vec<String>,
 }
 
 impl<'a> egui_dock::TabViewer for TabViewer<'a> {
     type Tab = Box<dyn Tab>;
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        tab.update(ui, self.state)
+        if let Some(message) = tab.update(ui, self.state) {
+            self.messages.push(message)
+        }
     }
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {

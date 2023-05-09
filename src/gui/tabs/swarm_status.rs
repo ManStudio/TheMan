@@ -10,7 +10,11 @@ impl Tab for TabSwarmStatus {
         "Swarm Status"
     }
 
-    fn update(&mut self, ui: &mut eframe::egui::Ui, state: &mut crate::gui::TheManGuiState) {
+    fn update(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        state: &mut crate::gui::TheManGuiState,
+    ) -> Option<String> {
         if let Some(kademlia_status) = &state.kademlia_status {
             ui.label(format!("Peers: {}", kademlia_status.num_peers()));
             let conn = kademlia_status.connection_counters();
@@ -28,6 +32,7 @@ impl Tab for TabSwarmStatus {
                 conn.num_established_outgoing()
             ));
         }
+        None
     }
 
     fn clone_box(&self) -> Box<dyn Tab> {
@@ -41,4 +46,6 @@ impl Tab for TabSwarmStatus {
     fn set_id(&mut self, id: usize) {
         self.id = id;
     }
+
+    fn recive(&mut self, message: String) {}
 }

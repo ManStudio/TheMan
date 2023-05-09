@@ -14,7 +14,11 @@ impl Tab for TabBootNodes {
         "Boot Nodes"
     }
 
-    fn update(&mut self, ui: &mut eframe::egui::Ui, state: &mut crate::gui::TheManGuiState) {
+    fn update(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        state: &mut crate::gui::TheManGuiState,
+    ) -> Option<String> {
         ui.horizontal(|ui| {
             if ui.button("Refresh").clicked() {
                 let _ = state.sender.try_send(Message::GetBootNodes);
@@ -31,6 +35,7 @@ impl Tab for TabBootNodes {
                 });
             }
         });
+        None
     }
 
     fn clone_box(&self) -> Box<dyn Tab> {
@@ -44,4 +49,6 @@ impl Tab for TabBootNodes {
     fn set_id(&mut self, id: usize) {
         self.id = id;
     }
+
+    fn recive(&mut self, message: String) {}
 }

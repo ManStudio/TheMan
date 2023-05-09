@@ -16,7 +16,11 @@ impl Tab for TabPeers {
         "Peers"
     }
 
-    fn update(&mut self, ui: &mut eframe::egui::Ui, state: &mut crate::gui::TheManGuiState) {
+    fn update(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        state: &mut crate::gui::TheManGuiState,
+    ) -> Option<String> {
         let row_height = ui.text_style_height(&egui::TextStyle::Body);
         let peers = state
             .peers
@@ -44,6 +48,7 @@ impl Tab for TabPeers {
                 }
             }
         });
+        None
     }
 
     fn clone_box(&self) -> Box<dyn Tab> {
@@ -57,4 +62,6 @@ impl Tab for TabPeers {
     fn set_id(&mut self, id: usize) {
         self.id = id;
     }
+
+    fn recive(&mut self, message: String) {}
 }

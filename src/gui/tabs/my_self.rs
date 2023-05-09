@@ -12,7 +12,11 @@ impl Tab for TabMySelf {
         "My Self"
     }
 
-    fn update(&mut self, ui: &mut eframe::egui::Ui, state: &mut crate::gui::TheManGuiState) {
+    fn update(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        state: &mut crate::gui::TheManGuiState,
+    ) -> Option<String> {
         if ui.button("Refresh").clicked() {
             state.send(Message::GetAdresses);
         }
@@ -33,6 +37,7 @@ impl Tab for TabMySelf {
                 ui.output_mut(|out| out.copied_text = format!("{}", adress.addr));
             }
         }
+        None
     }
 
     fn clone_box(&self) -> Box<dyn Tab> {
@@ -46,4 +51,6 @@ impl Tab for TabMySelf {
     fn set_id(&mut self, id: usize) {
         self.id = id;
     }
+
+    fn recive(&mut self, message: String) {}
 }

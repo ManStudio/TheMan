@@ -16,7 +16,12 @@ impl Tab for TabAccounts {
         "Accounts"
     }
 
-    fn update(&mut self, ui: &mut eframe::egui::Ui, state: &mut crate::gui::TheManGuiState) {
+    fn update(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        state: &mut crate::gui::TheManGuiState,
+    ) -> Option<String> {
+        let mut message = None;
         if ui.button("Refresh").clicked() {
             state.send(crate::logic::message::Message::GetAccounts);
         }
@@ -30,6 +35,9 @@ impl Tab for TabAccounts {
             let button = ui.button(account.name.to_string());
             if button.clicked() {
                 to_send.push(crate::logic::message::Message::SetAccount(i));
+            }
+            if button.secondary_clicked() {
+                message = Some(format!("o6,{i}"));
             }
         }
 
@@ -63,6 +71,8 @@ impl Tab for TabAccounts {
         for message in to_send {
             state.send(message)
         }
+
+        message
     }
 
     fn clone_box(&self) -> Box<dyn Tab> {
@@ -75,5 +85,9 @@ impl Tab for TabAccounts {
 
     fn set_id(&mut self, id: usize) {
         self.id = id;
+    }
+
+    fn recive(&mut self, message: String) {
+        todo!()
     }
 }

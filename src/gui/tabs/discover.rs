@@ -16,7 +16,11 @@ impl Tab for TabDiscover {
         "Discover"
     }
 
-    fn update(&mut self, ui: &mut eframe::egui::Ui, state: &mut crate::gui::TheManGuiState) {
+    fn update(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        state: &mut crate::gui::TheManGuiState,
+    ) -> Option<String> {
         ui.horizontal(|ui| {
             ui.label("PeerId: ");
             ui.text_edit_singleline(&mut self.peer_id);
@@ -31,7 +35,7 @@ impl Tab for TabDiscover {
             }
         });
 
-        let Some(peer_id) = &self.waiting_for else{return};
+        let Some(peer_id) = &self.waiting_for else{return None};
         if let Some(query_id) = state.query_id_for_peers.get(peer_id) {
             ui.label(format!("QueryId: {:?}", query_id));
             if let Some((res, stats, step)) = state.kademlia_query_progress.get(query_id) {
@@ -97,6 +101,7 @@ impl Tab for TabDiscover {
         } else {
             ui.spinner();
         }
+        None
     }
 
     fn clone_box(&self) -> Box<dyn Tab> {
@@ -110,4 +115,6 @@ impl Tab for TabDiscover {
     fn set_id(&mut self, id: usize) {
         self.id = id;
     }
+
+    fn recive(&mut self, message: String) {}
 }
