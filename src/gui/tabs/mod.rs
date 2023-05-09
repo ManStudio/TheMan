@@ -15,6 +15,8 @@ pub trait Tab {
     fn update(&mut self, ui: &mut egui::Ui, state: &mut TheManGuiState);
 
     fn clone_box(&self) -> Box<dyn Tab>;
+    fn id(&self) -> usize;
+    fn set_id(&mut self, id: usize);
 }
 
 pub struct TabManager {
@@ -50,8 +52,7 @@ impl TabManager {
                 'o' => {
                     chars.reverse();
                     let Ok(num) = String::from_iter(chars).parse::<usize>()else{eprintln!("After o should be a number like: o10"); continue};
-                    let Some(tab) = self.registerd_tabs.get(num) else {eprintln!("Invalid registered tab index!"); continue};
-                    self.tabs.push_to_focused_leaf(tab.clone_box());
+                    self.open(num);
                 }
                 'f' => {
                     chars.reverse();
@@ -74,6 +75,35 @@ impl TabManager {
         }
     }
 
+    pub fn open(&mut self, registered_tab: usize) {
+        let Some(tab) = self.registerd_tabs.get(registered_tab) else {eprintln!("Invalid registered tab index!"); return};
+        let mut tab = tab.clone_box();
+        let mut used_ids = Vec::new();
+        let test = self
+            .tabs
+            .iter()
+            .map(|node| {
+                if let egui_dock::Node::Leaf { tabs, .. } = node {
+                    tabs.iter()
+                        .filter(|tab2| tab2.name() == tab.name())
+                        .collect::<Vec<&Box<dyn Tab>>>()
+                } else {
+                    vec![]
+                }
+            })
+            .flatten()
+            .for_each(|tab| used_ids.push(tab.id()));
+
+        let mut id = 1;
+        while used_ids.contains(&id) {
+            id += 1;
+        }
+
+        let mut tab = tab.clone_box();
+        tab.set_id(id);
+        self.tabs.push_to_focused_leaf(tab);
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui, state: &mut TheManGuiState) {
         let mut tab_viewer = TabViewer {
             registered_tabs: &self.registerd_tabs,
@@ -88,14 +118,14 @@ impl TabManager {
 
         tab_viewer.added_tabs.drain(..).for_each(|(tab, index)| {
             self.tabs.set_focused_node(index);
-            self.tabs.push_to_focused_leaf(tab);
+            self.open(tab)
         });
     }
 }
 
 pub struct TabViewer<'a> {
     pub registered_tabs: &'a Vec<Box<dyn Tab>>,
-    pub added_tabs: Vec<(Box<dyn Tab>, egui_dock::NodeIndex)>,
+    pub added_tabs: Vec<(usize, egui_dock::NodeIndex)>,
     pub state: &'a mut TheManGuiState,
 }
 
@@ -107,16 +137,16 @@ impl<'a> egui_dock::TabViewer for TabViewer<'a> {
     }
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        tab.name().into()
+        format!("{} {}", tab.name(), tab.id()).into()
     }
 
     fn add_popup(&mut self, ui: &mut egui::Ui, node: egui_dock::NodeIndex) {
         ui.style_mut().visuals.button_frame = false;
         ui.set_min_width(100.0);
 
-        for tab in self.registered_tabs {
+        for (i, tab) in self.registered_tabs.iter().enumerate() {
             if ui.button(tab.name()).clicked() {
-                self.added_tabs.push((tab.clone_box(), node));
+                self.added_tabs.push((i, node));
             }
         }
     }

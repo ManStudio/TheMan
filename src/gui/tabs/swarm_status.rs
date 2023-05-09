@@ -1,7 +1,9 @@
 use super::Tab;
 
 #[derive(Default, Clone)]
-pub struct TabSwarmStatus {}
+pub struct TabSwarmStatus {
+    id: usize,
+}
 
 impl Tab for TabSwarmStatus {
     fn name(&self) -> &str {
@@ -30,5 +32,13 @@ impl Tab for TabSwarmStatus {
 
     fn clone_box(&self) -> Box<dyn Tab> {
         Box::new(self.clone())
+    }
+
+    fn id(&self) -> usize {
+        self.id
+    }
+
+    fn set_id(&mut self, id: usize) {
+        self.id = id;
     }
 }

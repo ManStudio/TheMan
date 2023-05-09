@@ -5,7 +5,9 @@ use crate::logic::message::Message;
 use super::Tab;
 
 #[derive(Default, Clone)]
-pub struct TabBootNodes {}
+pub struct TabBootNodes {
+    id: usize,
+}
 
 impl Tab for TabBootNodes {
     fn name(&self) -> &str {
@@ -33,5 +35,13 @@ impl Tab for TabBootNodes {
 
     fn clone_box(&self) -> Box<dyn Tab> {
         Box::new(self.clone())
+    }
+
+    fn id(&self) -> usize {
+        self.id
+    }
+
+    fn set_id(&mut self, id: usize) {
+        self.id = id;
     }
 }
