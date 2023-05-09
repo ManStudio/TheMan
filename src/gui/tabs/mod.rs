@@ -105,6 +105,9 @@ impl TabManager {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, state: &mut TheManGuiState) {
+        if self.tabs.is_empty() {
+            self.open(0)
+        }
         let mut tab_viewer = TabViewer {
             registered_tabs: &self.registerd_tabs,
             added_tabs: Vec::new(),
