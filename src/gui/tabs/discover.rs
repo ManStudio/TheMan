@@ -87,6 +87,7 @@ impl Tab for TabDiscover {
                 if let Some(duration) = stats.duration() {
                     ui.label(format!("Duration: {}", duration.as_secs_f32()));
                 }
+                ui.label(format!("Step: {}", step.count));
                 if !step.last {
                     ui.spinner();
                 }
