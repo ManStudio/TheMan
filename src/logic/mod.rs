@@ -27,33 +27,28 @@ impl TheManLogic {
     pub async fn run(mut self) {
         let _ = self
             .sender
-            .try_send(Message::SwarmStatus(self.state.swarm.network_info()));
-        let _ = self.sender.try_send(Message::Peer(self.state.peer_id));
-
-        let _ = self
-            .state
-            .swarm
-            .listen_on("/ip4/0.0.0.0/tcp/0".parse().unwrap());
-
-        self.bootstrap = Some(
-            self.state
-                .swarm
-                .behaviour_mut()
-                .kademlia
-                .bootstrap()
-                .unwrap(),
-        );
+            .try_send(Message::Accounts(self.state.accounts.clone()));
 
         loop {
-            tokio::select! {
-                Some(message) = self.reciver.recv() => {
-                    if let Message::ShutDown = &message {break}else{
-                        self.on_message(message).await;
-                    }
+            if let Some(account) = &mut self.state.account {
+                tokio::select! {
+                    Some(message) = self.reciver.recv() => {
+                        if let Message::ShutDown = &message {break}else{
+                            self.on_message(message).await;
+                        }
 
-                },
-                event = self.state.swarm.select_next_some() => {
-                    self.on_event(event).await;
+                    },
+                    event = account.swarm.select_next_some() => {
+                        self.on_event(event).await;
+                    }
+                }
+            } else {
+                tokio::select! {
+                    Some(message) = self.reciver.recv() => {
+                        if let Message::ShutDown = &message {break}else{
+                            self.on_message(message).await;
+                        }
+                    }
                 }
             }
         }

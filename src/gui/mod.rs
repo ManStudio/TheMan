@@ -3,19 +3,30 @@ use std::time::Duration;
 use eframe::egui;
 use libp2p::{kad::kbucket::NodeStatus, Multiaddr, PeerId};
 
-use crate::{logic::message::Message, save_state::TheManSaveState, state::PeerStatus};
+use crate::{
+    logic::message::Message,
+    save_state::{Account, TheManSaveState},
+    state::PeerStatus,
+};
 
 mod tabs;
 use tabs::*;
 
 pub struct TheManGuiState {
     pub kademlia_status: Option<libp2p::swarm::NetworkInfo>,
-    pub save: Option<TheManSaveState>,
+    pub save: Option<Option<TheManSaveState>>,
     pub bootnodes: Vec<(PeerId, NodeStatus, Vec<Multiaddr>)>,
     pub peers: Vec<(PeerId, PeerStatus)>,
     pub peer_id: Option<PeerId>,
     pub receiver: tokio::sync::mpsc::Receiver<Message>,
     pub sender: tokio::sync::mpsc::Sender<Message>,
+    pub accounts: Vec<Account>,
+}
+
+impl TheManGuiState {
+    pub fn send(&mut self, message: Message) {
+        let _ = self.sender.try_send(message);
+    }
 }
 
 pub struct TheMan {
@@ -35,8 +46,9 @@ impl TheMan {
         tab_manager.register::<TabBootNodes>();
         tab_manager.register::<TabPeers>();
         tab_manager.register::<TabMySelf>();
+        tab_manager.register::<TabAccounts>();
 
-        tab_manager.execute("o0;o1;o2;o3");
+        tab_manager.execute("o0;o1;o2;o3;o4");
 
         Self {
             state: TheManGuiState {
@@ -47,6 +59,7 @@ impl TheMan {
                 receiver,
                 sender,
                 peer_id: None,
+                accounts: Vec::new(),
             },
             should_close: false,
             one_time: false,
@@ -66,6 +79,7 @@ impl TheMan {
                 Message::BootNodes(nodes) => self.state.bootnodes = nodes,
                 Message::Peers(peers) => self.state.peers = peers,
                 Message::Peer(peer_id) => self.state.peer_id = Some(peer_id),
+                Message::Accounts(accounts) => self.state.accounts = accounts,
                 _ => {}
             }
         }
@@ -88,7 +102,6 @@ impl eframe::App for TheMan {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        println!("Send save");
         self.state.sender.try_send(Message::Save).unwrap();
         let save_state = loop {
             if let Some(save) = &self.state.save {
@@ -97,11 +110,15 @@ impl eframe::App for TheMan {
                 self.process_events();
             }
         };
-        storage.set_string("state", ron::to_string(save_state).unwrap());
+
+        if let Some(save) = save_state {
+            storage.set_string("state", ron::to_string(save).unwrap());
+            println!("Saved");
+        }
+
         if self.should_close {
             self.state.sender.try_send(Message::ShutDown).unwrap();
         }
-        log::debug!("Saved");
     }
 
     fn auto_save_interval(&self) -> std::time::Duration {

@@ -17,15 +17,12 @@ impl TheManLogic {
                         libp2p::kad::KademliaEvent::OutboundQueryProgressed {
                             id, step, ..
                         } => {
-                            if id == self.bootstrap.unwrap() && step.last {
-                                self.bootstrap = Some(
-                                    self.state
-                                        .swarm
-                                        .behaviour_mut()
-                                        .kademlia
-                                        .bootstrap()
-                                        .unwrap(),
-                                );
+                            if let Some(account) = &mut self.state.account {
+                                if id == self.bootstrap.unwrap() && step.last {
+                                    self.bootstrap = Some(
+                                        account.swarm.behaviour_mut().kademlia.bootstrap().unwrap(),
+                                    );
+                                }
                             }
                         }
                         libp2p::kad::KademliaEvent::RoutingUpdated { .. } => {}
@@ -62,10 +59,12 @@ impl TheManLogic {
                         }
                         libp2p::autonat::Event::StatusChanged { new, .. } => {
                             println!("NatStatus: {new:?}");
-                            println!(
-                                "Adress: {:?}",
-                                self.state.swarm.behaviour_mut().autonat.public_address()
-                            );
+                            if let Some(account) = &mut self.state.account {
+                                println!(
+                                    "Adress: {:?}",
+                                    account.swarm.behaviour_mut().autonat.public_address()
+                                );
+                            }
                         }
                     },
                     BehaviourEvent::Relay(event) => {
@@ -99,8 +98,10 @@ impl TheManLogic {
     }
 
     pub fn update_swarm_status(&mut self) {
-        let _ = self
-            .sender
-            .try_send(Message::SwarmStatus(self.state.swarm.network_info()));
+        if let Some(account) = &mut self.state.account {
+            let _ = self
+                .sender
+                .try_send(Message::SwarmStatus(account.swarm.network_info()));
+        }
     }
 }

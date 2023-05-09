@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use gui::TheMan;
 use libp2p::identity::Keypair;
 use logic::{message::Message, TheManLogic};
-use save_state::TheManSaveState;
+use save_state::{Account, TheManSaveState};
 use state::TheManState;
 
 pub mod gui;
@@ -48,36 +48,45 @@ async fn main() {
             centered: true,
         },
         Box::new(|creator| {
-            let state: TheManSaveState =  if let Some(data) = creator.storage.expect("storage").get_string("state") {
-                ron::from_str(&data).unwrap()
-            }else{
+            let state: Option<TheManSaveState> =
+                if let Some(data) = creator.storage.expect("storage").get_string("state") {
+                    if let Ok(state) = ron::from_str(&data) {
+                        Some(state)
+                    } else {
+                        eprintln!("Cannot perse save file");
+                        None
+                    }
+                } else {
+                    None
+                };
+            let state = if let Some(state) = state {
+                state
+            } else {
                 let key_pair = Keypair::generate_ed25519();
                 let private = key_pair.to_protobuf_encoding().unwrap();
-                TheManSaveState { private, nodes: vec![
-        		"/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN".parse().unwrap(),
-        		"/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa".parse().unwrap(),
-        		"/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb".parse().unwrap(),
-        		"/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt".parse().unwrap(),
-        		"/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ".parse().unwrap(),
-        		"/ip4/104.131.131.82/udp/4001/quic/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ".parse().unwrap()] }
+                TheManSaveState {
+                    accounts: vec![Account {
+                        name: "Guest".into(),
+                        private,
+                    }],
+                    bootnodes: vec![],
+                }
             };
-
 
             let (gui_sender, logic_reciver) = tokio::sync::mpsc::channel::<Message>(255);
             let (logic_sender, gui_reciver) = tokio::sync::mpsc::channel(255);
 
-            *lo.lock().unwrap() = Some(tokio::spawn(async{
-                let state:TheManState = state.into();
+            *lo.lock().unwrap() = Some(tokio::spawn(async {
+                let state: TheManState = state.into();
                 let logic = TheManLogic::new(state, gui_sender, gui_reciver);
                 logic.run().await;
-                }
-            ));
+            }));
 
             drop(lo);
 
             let app = TheMan::new(logic_reciver, logic_sender);
             Box::new(app)
-            }),
+        }),
     )
     .unwrap();
 
