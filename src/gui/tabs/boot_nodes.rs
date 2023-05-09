@@ -1,0 +1,37 @@
+use eframe::egui;
+
+use crate::logic::message::Message;
+
+use super::Tab;
+
+#[derive(Default, Clone)]
+pub struct TabBootNodes {}
+
+impl Tab for TabBootNodes {
+    fn name(&self) -> &str {
+        "Boot Nodes"
+    }
+
+    fn update(&mut self, ui: &mut eframe::egui::Ui, state: &mut crate::gui::TheManGuiState) {
+        ui.horizontal(|ui| {
+            if ui.button("Refresh").clicked() {
+                let _ = state.sender.try_send(Message::GetBootNodes);
+            }
+            ui.label(format!("Nodes: {}", state.bootnodes.len()));
+        });
+        let row_height = ui.text_style_height(&egui::TextStyle::Body);
+        egui::ScrollArea::both().show_rows(ui, row_height, state.bootnodes.len(), |ui, range| {
+            for peer in &state.bootnodes[range] {
+                ui.horizontal(|ui| {
+                    ui.label(format!("Id: {}", peer.0));
+                    ui.label(format!("Status: {:?}", peer.1));
+                    ui.label(format!("Adresses: {:?}", peer.2));
+                });
+            }
+        });
+    }
+
+    fn clone_box(&self) -> Box<dyn Tab> {
+        Box::new(self.clone())
+    }
+}
