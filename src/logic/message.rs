@@ -23,6 +23,7 @@ pub enum Message {
     SetAccount(usize),
     GetAccounts,
     Accounts(Vec<Account>),
+    UpdateAccounts(Vec<Account>),
     GetAdresses,
     Adresses(Vec<AddressRecord>),
     ShutDown,
@@ -97,7 +98,8 @@ impl TheManLogic {
                 }
             }
             Message::GetAccounts => {
-                self.sender
+                let _ = self
+                    .sender
                     .try_send(Message::Accounts(self.state.accounts.clone()));
             }
             Message::SetAccount(account) => {
@@ -115,6 +117,10 @@ impl TheManLogic {
 
                     self.bootstrap =
                         Some(account.swarm.behaviour_mut().kademlia.bootstrap().unwrap());
+
+                    let _ = self
+                        .sender
+                        .try_send(Message::Accounts(self.state.accounts.clone()));
                 }
             }
             Message::GetAdresses => {
@@ -125,8 +131,14 @@ impl TheManLogic {
                         .cloned()
                         .collect::<Vec<AddressRecord>>();
 
-                    self.sender.try_send(Message::Adresses(adresses));
+                    let _ = self.sender.try_send(Message::Adresses(adresses));
                 }
+            }
+            Message::UpdateAccounts(accounts) => {
+                self.state.accounts = accounts;
+                let _ = self
+                    .sender
+                    .try_send(Message::Accounts(self.state.accounts.clone()));
             }
             _ => {}
         }

@@ -1,8 +1,14 @@
+use eframe::egui;
+use libp2p::identity::Keypair;
+
+use crate::save_state::Account;
+
 use super::Tab;
 
 #[derive(Default, Clone)]
 pub struct TabAccounts {
     id: usize,
+    add_user_name: String,
 }
 
 impl Tab for TabAccounts {
@@ -17,11 +23,42 @@ impl Tab for TabAccounts {
 
         let mut to_send = vec![];
 
+        ui.separator();
+
+        ui.label("Accounts:");
         for (i, account) in state.accounts.iter().enumerate() {
-            if ui.button(format!("Account: {}", account.name)).clicked() {
+            let button = ui.button(account.name.to_string());
+            if button.clicked() {
                 to_send.push(crate::logic::message::Message::SetAccount(i));
             }
         }
+
+        ui.separator();
+
+        ui.label("Add account:");
+        ui.horizontal(|ui| {
+            ui.label("Account Name: ");
+            ui.text_edit_singleline(&mut self.add_user_name);
+            if ui.button("Add").clicked() {
+                let allready_taken = state
+                    .accounts
+                    .iter()
+                    .filter(|account| account.name == self.add_user_name)
+                    .count()
+                    > 0;
+                if allready_taken {
+                    eprintln!("The Account name is allready taken!");
+                } else {
+                    state.accounts.push(Account {
+                        name: self.add_user_name.clone(),
+                        private: Keypair::generate_ed25519().to_protobuf_encoding().unwrap(),
+                    });
+                    to_send.push(crate::logic::message::Message::UpdateAccounts(
+                        state.accounts.clone(),
+                    ));
+                }
+            }
+        });
 
         for message in to_send {
             state.send(message)
