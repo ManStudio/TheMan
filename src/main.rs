@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use chrono::Utc;
 use gui::TheMan;
 use libp2p::identity::Keypair;
 use logic::{message::Message, TheManLogic};
@@ -68,6 +69,8 @@ async fn main() {
                     accounts: vec![Account {
                         name: "Guest".into(),
                         private,
+                        friends: vec![],
+                        expires: Utc::now(),
                     }],
                     bootnodes: vec![],
                 }

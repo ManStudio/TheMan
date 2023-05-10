@@ -1,3 +1,6 @@
+use std::time::Instant;
+
+use chrono::Utc;
 use libp2p::{
     gossipsub::{IdentTopic, TopicHash},
     kad::{kbucket::NodeStatus, ProgressStep, QueryId, QueryResult, QueryStats},
@@ -39,6 +42,7 @@ pub enum Message {
     NewSubscribed(PeerId, TopicHash),
     DestroySubscriber(PeerId, TopicHash),
     SendMessage(TopicHash, Vec<u8>),
+    FindMe,
     ShutDown,
 }
 
@@ -65,6 +69,14 @@ impl TheManLogic {
                                     }
                                 }
                             }
+                        }
+
+                        if let Some(acc) = self.state.accounts.get_mut(account.index) {
+                            acc.expires = Utc::now()
+                                + chrono::Duration::from_std(
+                                    account.expires.duration_since(Instant::now()),
+                                )
+                                .unwrap_or_else(|_| chrono::Duration::zero())
                         }
 
                         TheManSaveState {

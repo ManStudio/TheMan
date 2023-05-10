@@ -1,3 +1,4 @@
+use chrono::Utc;
 use libp2p::identity::Keypair;
 
 use crate::save_state::Account;
@@ -59,6 +60,8 @@ impl Tab for TabAccounts {
                     state.accounts.push(Account {
                         name: self.add_user_name.clone(),
                         private: Keypair::generate_ed25519().to_protobuf_encoding().unwrap(),
+                        friends: vec![],
+                        expires: Utc::now(),
                     });
                     to_send.push(crate::logic::message::Message::UpdateAccounts(
                         state.accounts.clone(),

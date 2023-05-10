@@ -6,11 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+chrono = { version = "0.4.24", features = ["serde"] }
 eframe = { version = "0.21", features = ["persistence", "ron"] }
 egui_dock = { version = "0.5.0", features = ["serde"] }
 env_logger = "0.10.0"
 libp2p = { version = "0.51.3", features = ["full"] }
 log = "0.4.17"
 ron = "0.8.0"
-serde = "1.0.162"
+serde = "1.0" 
 tokio = { version = "1.28.0", features = ["rt", "rt-multi-thread", "macros", "sync"] }

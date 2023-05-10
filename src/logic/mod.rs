@@ -1,5 +1,7 @@
+use std::time::{Duration, Instant};
+
 use crate::state::TheManState;
-use libp2p::{futures::StreamExt, gossipsub::TopicHash};
+use libp2p::{futures::StreamExt, gossipsub::TopicHash, multihash::Hasher};
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use self::message::Message;
@@ -13,6 +15,7 @@ pub struct TheManLogic {
     pub reciver: Receiver<Message>,
     pub bootstrap: Option<libp2p::kad::QueryId>,
     pub subscribed: Vec<TopicHash>,
+    pub registration_query: Option<libp2p::kad::QueryId>,
 }
 
 impl TheManLogic {
@@ -23,6 +26,7 @@ impl TheManLogic {
             reciver,
             bootstrap: None,
             subscribed: Vec::new(),
+            registration_query: None,
         }
     }
 
@@ -33,6 +37,7 @@ impl TheManLogic {
 
         loop {
             if let Some(account) = &mut self.state.account {
+                let renew_account = tokio::time::Instant::from_std(account.expires);
                 tokio::select! {
                     Some(message) = self.reciver.recv() => {
                         if let Message::ShutDown = &message {break}else{
@@ -42,6 +47,23 @@ impl TheManLogic {
                     },
                     event = account.swarm.select_next_some() => {
                         self.on_event(event).await;
+                    }
+                    _ = tokio::time::sleep_until(renew_account) => {
+                        let mut hasher = libp2p::multihash::Sha2_256::default();
+                        hasher.update(account.name.as_bytes());
+                        let hash = hasher.finalize();
+                        const SECS: u64 = 60 * 60 * 24 * 3;
+                        let instant = Instant::now() + Duration::from_secs(SECS);
+                        self.registration_query = account.swarm.behaviour_mut().kademlia.put_record(
+                            libp2p::kad::Record {
+                                key: libp2p::kad::RecordKey::new(&libp2p::bytes::Bytes::copy_from_slice(hash)),
+                                value: account.peer_id.to_bytes(),
+                                publisher: None,
+                                expires: Some(instant),
+                            },
+                            libp2p::kad::Quorum::One,
+                        ).map_or_else(|e|{eprintln!("Cannot register itself: {e:?}"); None}, Some);
+                        account.expires = instant;
                     }
                 }
             } else {

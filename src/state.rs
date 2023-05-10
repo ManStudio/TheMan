@@ -1,5 +1,9 @@
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
+use chrono::Utc;
 use libp2p::{
     identify::Info,
     identity::Keypair,
@@ -9,7 +13,7 @@ use libp2p::{
     Multiaddr, PeerId, Swarm,
 };
 
-use crate::save_state::Account;
+use crate::save_state::{Account, Friend};
 
 #[derive(Default, Debug)]
 pub struct PeerStatus {
@@ -41,10 +45,13 @@ impl Clone for PeerStatus {
 }
 
 pub struct ActiveAccount {
+    pub index: usize,
     pub name: String,
     pub peer_id: PeerId,
     pub keypair: Keypair,
     pub swarm: Swarm<TheManBehaviour>,
+    pub friends: Vec<Friend>,
+    pub expires: Instant,
 }
 
 pub struct TheManState {
@@ -55,8 +62,8 @@ pub struct TheManState {
 }
 
 impl TheManState {
-    pub fn set_account(&mut self, account: usize) {
-        let Some(account) = self.accounts.get(account) else{return};
+    pub fn set_account(&mut self, account_index: usize) {
+        let Some(account) = self.accounts.get(account_index) else{return};
 
         let keypair = Keypair::from_protobuf_encoding(&account.private).unwrap();
         let peer_id = PeerId::from(keypair.public());
@@ -151,11 +158,21 @@ impl TheManState {
         )
         .build();
 
+        let instant = Instant::now()
+            + account
+                .expires
+                .signed_duration_since(Utc::now())
+                .to_std()
+                .unwrap_or(Duration::ZERO);
+
         let account = ActiveAccount {
             name: account.name.clone(),
             peer_id,
             keypair,
             swarm,
+            expires: instant,
+            friends: vec![],
+            index: account_index,
         };
 
         self.account = Some(account)
