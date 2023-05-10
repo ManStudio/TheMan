@@ -67,8 +67,6 @@ impl TheManLogic {
                             }
                         }
 
-                        let private = account.keypair.to_protobuf_encoding().unwrap();
-
                         TheManSaveState {
                             bootnodes: nodes,
                             accounts: self.state.accounts.clone(),
@@ -78,7 +76,7 @@ impl TheManLogic {
                         .sender
                         .try_send(Message::SaveResponse(Some(save_state)));
                 } else {
-                    self.sender.try_send(Message::SaveResponse(None));
+                    let _ = self.sender.try_send(Message::SaveResponse(None));
                 }
             }
             Message::GetBootNodes => {
@@ -167,18 +165,18 @@ impl TheManLogic {
             }
             Message::SubscribeTopic(topic) => {
                 if let Some(account) = &mut self.state.account {
-                    account.swarm.behaviour_mut().gossipsub.subscribe(&topic);
+                    let _ = account.swarm.behaviour_mut().gossipsub.subscribe(&topic);
                     self.subscribed.push(topic.hash());
                 }
             }
             Message::UnsubscibeTopic(topic) => {
                 if let Some(account) = &mut self.state.account {
-                    account.swarm.behaviour_mut().gossipsub.unsubscribe(&topic);
+                    let _ = account.swarm.behaviour_mut().gossipsub.unsubscribe(&topic);
                 }
             }
             Message::SendMessage(topic, message) => {
                 if let Some(account) = &mut self.state.account {
-                    account
+                    let _ = account
                         .swarm
                         .behaviour_mut()
                         .gossipsub

@@ -26,7 +26,7 @@ impl Tab for TabChannels {
     fn update(
         &mut self,
         ui: &mut eframe::egui::Ui,
-        state: &mut crate::gui::TheManGuiState,
+        _state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
         let mut script = String::new();
 
@@ -80,7 +80,7 @@ impl Tab for TabChannels {
         }
     }
 
-    fn recive(&mut self, message: String) {}
+    fn recive(&mut self, _message: String) {}
 
     fn clone_box(&self) -> Box<dyn Tab> {
         Box::<Self>::default()

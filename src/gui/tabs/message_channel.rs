@@ -1,5 +1,5 @@
 use eframe::egui;
-use libp2p::gossipsub::{IdentTopic, TopicHash};
+use libp2p::gossipsub::IdentTopic;
 
 use super::Tab;
 
@@ -149,7 +149,7 @@ impl Drop for TabMessageChannel {
     fn drop(&mut self) {
         if let Some(sender) = &self.sender {
             if let Some(topic) = self.topic.clone() {
-                sender.try_send(crate::logic::message::Message::UnsubscibeTopic(topic));
+                let _ = sender.try_send(crate::logic::message::Message::UnsubscibeTopic(topic));
             }
         }
     }

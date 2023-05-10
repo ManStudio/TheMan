@@ -1,8 +1,5 @@
 use crate::state::TheManState;
-use libp2p::{
-    futures::StreamExt,
-    gossipsub::{IdentTopic, TopicHash},
-};
+use libp2p::{futures::StreamExt, gossipsub::TopicHash};
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use self::message::Message;

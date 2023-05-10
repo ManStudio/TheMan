@@ -1,4 +1,4 @@
-use libp2p::{kad::QueryId, PeerId};
+use libp2p::PeerId;
 
 use crate::logic::message::Message;
 
@@ -116,5 +116,5 @@ impl Tab for TabDiscover {
         self.id = id;
     }
 
-    fn recive(&mut self, message: String) {}
+    fn recive(&mut self, _message: String) {}
 }

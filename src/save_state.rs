@@ -1,12 +1,6 @@
-use std::{collections::HashMap, time::Duration};
+use std::collections::HashMap;
 
-use libp2p::{
-    identity::Keypair,
-    kad::{store::MemoryStore, Kademlia, KademliaConfig},
-    multiaddr::Protocol,
-    swarm::SwarmBuilder,
-    Multiaddr, PeerId,
-};
+use libp2p::Multiaddr;
 
 use crate::state::TheManState;
 
@@ -23,7 +17,7 @@ pub struct TheManSaveState {
 }
 
 impl From<TheManSaveState> for TheManState {
-    fn from(mut value: TheManSaveState) -> Self {
+    fn from(value: TheManSaveState) -> Self {
         Self {
             peers: HashMap::new(),
             accounts: value.accounts,

@@ -50,5 +50,5 @@ impl Tab for TabBootNodes {
         self.id = id;
     }
 
-    fn recive(&mut self, message: String) {}
+    fn recive(&mut self, _message: String) {}
 }

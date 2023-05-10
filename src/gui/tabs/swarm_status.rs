@@ -47,5 +47,5 @@ impl Tab for TabSwarmStatus {
         self.id = id;
     }
 
-    fn recive(&mut self, message: String) {}
+    fn recive(&mut self, _message: String) {}
 }

@@ -52,5 +52,5 @@ impl Tab for TabMySelf {
         self.id = id;
     }
 
-    fn recive(&mut self, message: String) {}
+    fn recive(&mut self, _message: String) {}
 }

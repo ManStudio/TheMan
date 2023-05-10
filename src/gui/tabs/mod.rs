@@ -38,6 +38,7 @@ pub struct TabManager {
     pub tabs: egui_dock::Tree<Box<dyn Tab>>,
 }
 
+#[allow(clippy::new_without_default)]
 impl TabManager {
     pub fn new() -> Self {
         Self {
@@ -47,7 +48,7 @@ impl TabManager {
     }
 
     pub fn register<T: Tab + 'static + Default>(&mut self) {
-        self.registerd_tabs.push(Box::new(T::default()));
+        self.registerd_tabs.push(Box::<T>::default());
     }
 
     /// The script should look like `"o0;o1;o2"`

@@ -1,4 +1,3 @@
-use eframe::egui;
 use libp2p::identity::Keypair;
 
 use crate::save_state::Account;
@@ -87,7 +86,5 @@ impl Tab for TabAccounts {
         self.id = id;
     }
 
-    fn recive(&mut self, message: String) {
-        todo!()
-    }
+    fn recive(&mut self, _message: String) {}
 }
