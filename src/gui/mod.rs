@@ -2,6 +2,7 @@ use std::{collections::HashMap, time::Duration};
 
 use eframe::egui;
 use libp2p::{
+    gossipsub::TopicHash,
     kad::{kbucket::NodeStatus, ProgressStep, QueryId, QueryResult, QueryStats},
     swarm::AddressRecord,
     Multiaddr, PeerId,
@@ -28,6 +29,8 @@ pub struct TheManGuiState {
     pub accounts: Vec<Account>,
     pub kademlia_query_progress: HashMap<QueryId, (QueryResult, QueryStats, ProgressStep)>,
     pub query_id_for_peers: HashMap<PeerId, QueryId>,
+    pub messages: HashMap<TopicHash, Vec<libp2p::gossipsub::Message>>,
+    pub subscribers: HashMap<TopicHash, Vec<PeerId>>,
 }
 
 impl TheManGuiState {
@@ -49,13 +52,15 @@ impl TheMan {
         sender: tokio::sync::mpsc::Sender<Message>,
     ) -> Self {
         let mut tab_manager = TabManager::new();
-        tab_manager.register::<TabSwarmStatus>();
-        tab_manager.register::<TabBootNodes>();
-        tab_manager.register::<TabPeers>();
-        tab_manager.register::<TabMySelf>();
-        tab_manager.register::<TabAccounts>();
-        tab_manager.register::<TabDiscover>();
-        tab_manager.register::<TabAccount>();
+        tab_manager.register::<TabSwarmStatus>(); // 0
+        tab_manager.register::<TabBootNodes>(); // 1
+        tab_manager.register::<TabPeers>(); // 2
+        tab_manager.register::<TabMySelf>(); // 3
+        tab_manager.register::<TabAccounts>(); // 4
+        tab_manager.register::<TabDiscover>(); // 5
+        tab_manager.register::<TabAccount>(); // 6
+        tab_manager.register::<TabMessageChannel>(); // 7
+        tab_manager.register::<TabChannels>(); // 8
 
         tab_manager.execute("o0;o1;o2;o3;o4");
 
@@ -72,6 +77,8 @@ impl TheMan {
                 adresses: Vec::new(),
                 kademlia_query_progress: HashMap::new(),
                 query_id_for_peers: HashMap::new(),
+                messages: HashMap::new(),
+                subscribers: HashMap::new(),
             },
             should_close: false,
             one_time: false,
@@ -100,6 +107,25 @@ impl TheMan {
                     self.state
                         .kademlia_query_progress
                         .insert(query_id, (result, stats, step));
+                }
+                Message::NewMessage(topic, message) => {
+                    if let Some(messages) = self.state.messages.get_mut(&topic) {
+                        messages.push(message)
+                    } else {
+                        self.state.messages.insert(topic, vec![message]);
+                    }
+                }
+                Message::NewSubscribed(peer_id, topic) => {
+                    if let Some(subscribed) = self.state.subscribers.get_mut(&topic) {
+                        subscribed.push(peer_id)
+                    } else {
+                        self.state.subscribers.insert(topic, vec![peer_id]);
+                    }
+                }
+                Message::DestroySubscriber(peer_id, topic) => {
+                    if let Some(subscribed) = self.state.subscribers.get_mut(&topic) {
+                        subscribed.retain(|p| *p != peer_id);
+                    }
                 }
                 _ => {}
             }

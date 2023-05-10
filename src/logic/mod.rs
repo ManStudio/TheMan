@@ -1,5 +1,8 @@
 use crate::state::TheManState;
-use libp2p::futures::StreamExt;
+use libp2p::{
+    futures::StreamExt,
+    gossipsub::{IdentTopic, TopicHash},
+};
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use self::message::Message;
@@ -12,6 +15,7 @@ pub struct TheManLogic {
     pub sender: Sender<Message>,
     pub reciver: Receiver<Message>,
     pub bootstrap: Option<libp2p::kad::QueryId>,
+    pub subscribed: Vec<TopicHash>,
 }
 
 impl TheManLogic {
@@ -21,6 +25,7 @@ impl TheManLogic {
             sender,
             reciver,
             bootstrap: None,
+            subscribed: Vec::new(),
         }
     }
 

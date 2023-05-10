@@ -1,4 +1,5 @@
 use libp2p::{
+    gossipsub::{IdentTopic, TopicHash},
     kad::{kbucket::NodeStatus, ProgressStep, QueryId, QueryResult, QueryStats},
     multiaddr::Protocol,
     swarm::AddressRecord,
@@ -32,6 +33,12 @@ pub enum Message {
     SearchPeerId(PeerId),
     ResSearchPeerId(PeerId, QueryId),
     KademliaQueryProgress(QueryId, QueryResult, QueryStats, ProgressStep),
+    SubscribeTopic(IdentTopic),
+    UnsubscibeTopic(IdentTopic),
+    NewMessage(TopicHash, libp2p::gossipsub::Message),
+    NewSubscribed(PeerId, TopicHash),
+    DestroySubscriber(PeerId, TopicHash),
+    SendMessage(TopicHash, Vec<u8>),
     ShutDown,
 }
 
@@ -156,6 +163,26 @@ impl TheManLogic {
                     let _ = self
                         .sender
                         .try_send(Message::ResSearchPeerId(peer_id, query_id));
+                }
+            }
+            Message::SubscribeTopic(topic) => {
+                if let Some(account) = &mut self.state.account {
+                    account.swarm.behaviour_mut().gossipsub.subscribe(&topic);
+                    self.subscribed.push(topic.hash());
+                }
+            }
+            Message::UnsubscibeTopic(topic) => {
+                if let Some(account) = &mut self.state.account {
+                    account.swarm.behaviour_mut().gossipsub.unsubscribe(&topic);
+                }
+            }
+            Message::SendMessage(topic, message) => {
+                if let Some(account) = &mut self.state.account {
+                    account
+                        .swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .publish(topic, message);
                 }
             }
             _ => {}

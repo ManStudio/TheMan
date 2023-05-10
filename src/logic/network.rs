@@ -12,7 +12,7 @@ impl TheManLogic {
                 match event {
                     BehaviourEvent::Kademlia(event) => match event {
                         libp2p::kad::KademliaEvent::InboundRequest { request } => {
-                            println!("Request: {request:?}");
+                            // println!("Request: {request:?}");
                         }
                         libp2p::kad::KademliaEvent::OutboundQueryProgressed {
                             id,
@@ -59,29 +59,41 @@ impl TheManLogic {
                     }
                     BehaviourEvent::MDNS(event) => match event {
                         libp2p::mdns::Event::Discovered(discovered) => {
-                            println!("Discovered: {discovered:?}")
+                            if let Some(account) = &mut self.state.account {
+                                for (peer_id, addr) in discovered {
+                                    println!("mDNS: PeerId: {peer_id}, Addr: {addr}");
+                                }
+                            }
                         }
-                        libp2p::mdns::Event::Expired(_) => todo!(),
+                        libp2p::mdns::Event::Expired(_) => {}
                     },
                     BehaviourEvent::GossIpSub(event) => match event {
                         libp2p::gossipsub::Event::Message {
                             propagation_source,
                             message_id,
                             message,
-                        } => {}
-                        libp2p::gossipsub::Event::Subscribed { peer_id, topic } => {}
-                        libp2p::gossipsub::Event::Unsubscribed { peer_id, topic } => {}
+                        } => {
+                            let topic = message.topic.clone();
+                            self.sender.try_send(Message::NewMessage(topic, message));
+                        }
+                        libp2p::gossipsub::Event::Subscribed { peer_id, topic } => {
+                            self.sender.try_send(Message::NewSubscribed(peer_id, topic));
+                        }
+                        libp2p::gossipsub::Event::Unsubscribed { peer_id, topic } => {
+                            self.sender
+                                .try_send(Message::DestroySubscriber(peer_id, topic));
+                        }
                         libp2p::gossipsub::Event::GossipsubNotSupported { peer_id } => {}
                     },
                     BehaviourEvent::AutoNat(event) => match event {
                         libp2p::autonat::Event::InboundProbe(event) => {
-                            println!("Inbount: {event:?}")
+                            // println!("Inbount: {event:?}")
                         }
                         libp2p::autonat::Event::OutboundProbe(event) => {
-                            println!("Outbound: {event:?}")
+                            // println!("Outbound: {event:?}")
                         }
                         libp2p::autonat::Event::StatusChanged { new, .. } => {
-                            println!("NatStatus: {new:?}");
+                            // println!("NatStatus: {new:?}");
                             if let Some(account) = &mut self.state.account {
                                 println!(
                                     "Adress: {:?}",
@@ -91,7 +103,7 @@ impl TheManLogic {
                         }
                     },
                     BehaviourEvent::Relay(event) => {
-                        println!("Relay: {event:?}");
+                        // println!("Relay: {event:?}");
                     }
                     BehaviourEvent::Ping(event) => {
                         if let Some(peer) = self.state.peers.get_mut(&event.peer) {

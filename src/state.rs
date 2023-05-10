@@ -102,7 +102,7 @@ impl TheManState {
         let mdns = {
             libp2p::mdns::tokio::Behaviour::new(
                 libp2p::mdns::Config {
-                    ttl: Duration::from_secs(10),
+                    ttl: Duration::from_secs(60),
                     query_interval: Duration::from_secs(1),
                     enable_ipv6: false,
                 },
