@@ -141,9 +141,7 @@ impl eframe::App for TheMan {
 
         self.process_events();
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.tab_manager.ui(ui, &mut self.state);
-        });
+        self.tab_manager.ui(ctx, &mut self.state);
 
         ctx.request_repaint_after(Duration::from_secs(1) / 30)
     }

@@ -128,7 +128,7 @@ impl TabManager {
         self.tabs.push_to_focused_leaf(tab);
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, state: &mut TheManGuiState) {
+    pub fn ui(&mut self, ctx: &egui::Context, state: &mut TheManGuiState) {
         if self.tabs.is_empty() {
             self.open(0, None)
         }
@@ -140,10 +140,21 @@ impl TabManager {
             messages: Vec::new(),
         };
 
+        let mut style = ctx.style().as_ref().clone();
+        style.visuals.window_fill = egui::Color32::from_rgb(0x26, 0x26, 0x26);
+        style.visuals.panel_fill = egui::Color32::from_rgb(0x27, 0x27, 0x2a);
+        style.visuals.hyperlink_color = egui::Color32::from_rgb(0x1e, 0x40, 0xaf);
+
+        ctx.set_style(style);
+
+        let mut style = egui_dock::Style::from_egui(ctx.style().as_ref());
+        style.separator.width = 3.0;
+
         egui_dock::DockArea::new(&mut self.tabs)
+            .style(style)
             .show_add_buttons(true)
             .show_add_popup(true)
-            .show_inside(ui, &mut tab_viewer);
+            .show(ctx, &mut tab_viewer);
 
         let messages = tab_viewer.messages;
         let added_tabs = tab_viewer.added_tabs;
