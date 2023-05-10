@@ -36,52 +36,76 @@ impl Tab for TabMessageChannel {
             self.initializated = true;
         }
 
-        ui.label(&self.name);
+        ui.vertical_centered_justified(|ui| {
+            if ui
+                .selectable_label(
+                    false,
+                    egui::widget_text::WidgetText::RichText(
+                        egui::RichText::new(format!("Channel Name: {}", self.name)).size(21.0),
+                    ),
+                )
+                .clicked()
+            {
+                ui.output_mut(|out| {
+                    out.copied_text = self.name.clone();
+                })
+            };
+        });
+        ui.separator();
         let max_height =
-            (ui.available_height() - ui.text_style_height(&egui::TextStyle::Body)) - 6.0; // separator has 6 height by default
+            (ui.available_height() - ui.text_style_height(&egui::TextStyle::Heading)) - 12.0; // separator has 6 height by default
         ui.horizontal(|ui| {
             let width = ui.available_width();
             let message_width = width * self.split;
             let peers_width = width - message_width;
 
-            ui.vertical(|ui| {
-                ui.label("Messages: ");
-                let empty = vec![];
-                let messages = if let Some(messages) = state.messages.get(&topic.hash()) {
-                    messages
-                } else {
-                    &empty
-                };
-                egui::ScrollArea::both()
-                    .max_width(message_width)
-                    .max_height(max_height)
-                    .id_source("Messages")
-                    .show_rows(
-                        ui,
-                        ui.text_style_height(&egui::TextStyle::Body),
-                        messages.len(),
-                        |ui, range| {
-                            for message in &messages[range] {
-                                ui.horizontal(|ui| {
-                                    ui.label(format!(
-                                        "From: {}",
-                                        match &message.source {
+            ui.allocate_ui(egui::Vec2::new(width, max_height), |ui| {
+                ui.vertical(|ui| {
+                    ui.label("Messages: ");
+                    let empty = vec![];
+                    let messages = if let Some(messages) = state.messages.get(&topic.hash()) {
+                        messages
+                    } else {
+                        &empty
+                    };
+                    egui::ScrollArea::both()
+                        .auto_shrink([false, false])
+                        .max_width(message_width)
+                        .max_height(max_height)
+                        .id_source("Messages")
+                        .show_rows(
+                            ui,
+                            ui.text_style_height(&egui::TextStyle::Body),
+                            messages.len(),
+                            |ui, range| {
+                                for message in &messages[range] {
+                                    ui.horizontal(|ui| {
+                                        let from = match &message.source {
                                             Some(s) => s.to_string(),
                                             None => "NoBudy".to_string(),
+                                        };
+                                        ui.label("From: ");
+                                        if ui.selectable_label(false, &from).clicked() {
+                                            ui.output_mut(|out| out.copied_text = from.clone());
                                         }
-                                    ));
-                                    match String::from_utf8(message.data.clone()) {
-                                        Ok(text) => {
-                                            ui.label(text);
-                                        }
+                                    });
+                                    let text = match String::from_utf8(message.data.clone()) {
+                                        Ok(text) => text,
                                         Err(err) => {
-                                            ui.label(format!("Bytes: {:?}", err.as_bytes()));
+                                            format!("Bytes: {:?}", err.as_bytes())
                                         }
-                                    }
-                                });
-                            }
-                        },
-                    );
+                                    };
+                                    ui.horizontal(|ui| {
+                                        ui.label("    ");
+                                        if ui.selectable_label(false, &text).clicked() {
+                                            ui.output_mut(|out| out.copied_text = text.clone());
+                                        }
+                                    });
+                                    ui.separator();
+                                }
+                            },
+                        );
+                });
             });
             ui.separator();
             ui.vertical(|ui| {
@@ -95,6 +119,7 @@ impl Tab for TabMessageChannel {
                 };
                 egui::ScrollArea::both()
                     .id_source("Peers")
+                    .auto_shrink([false, false])
                     .max_width(peers_width)
                     .max_height(max_height)
                     .show_rows(
@@ -106,6 +131,7 @@ impl Tab for TabMessageChannel {
                                 if ui.selectable_label(false, format!("{}", peer)).clicked() {
                                     ui.output_mut(|out| out.copied_text = format!("{}", peer));
                                 }
+                                ui.separator();
                             }
                         },
                     );
@@ -116,7 +142,8 @@ impl Tab for TabMessageChannel {
 
         ui.horizontal(|ui| {
             ui.label("Message: ");
-            ui.text_edit_singleline(&mut self.message);
+            let width = ui.available_width() - 60.0;
+            ui.add(egui::TextEdit::singleline(&mut self.message).desired_width(width));
             if ui.button("Send").clicked() {
                 state.send(crate::logic::message::Message::SendMessage(
                     topic.hash(),
