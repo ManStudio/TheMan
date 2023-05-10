@@ -73,6 +73,30 @@ async fn main() {
                 }
             };
 
+            let mut font_def = eframe::egui::FontDefinitions::empty();
+            font_def.font_data.insert(
+                "Nerd-Font".into(),
+                eframe::egui::FontData::from_static(include_bytes!(
+                    "../fonts/Nerd Regular Mono.ttf"
+                ))
+                .tweak(eframe::egui::FontTweak {
+                    scale: 1.0,
+                    y_offset_factor: -0.2, // move it up
+                    y_offset: 0.0,
+                }),
+            );
+
+            font_def.families.insert(
+                eframe::egui::FontFamily::Monospace,
+                vec!["Nerd-Font".to_string()],
+            );
+            font_def.families.insert(
+                eframe::egui::FontFamily::Proportional,
+                vec!["Nerd-Font".to_string()],
+            );
+
+            creator.egui_ctx.set_fonts(font_def);
+
             let (gui_sender, logic_reciver) = tokio::sync::mpsc::channel::<Message>(255);
             let (logic_sender, gui_reciver) = tokio::sync::mpsc::channel(255);
 

@@ -112,7 +112,10 @@ impl TheManState {
         };
 
         let gossipsub = {
-            let config = libp2p::gossipsub::Config::default();
+            let config = libp2p::gossipsub::ConfigBuilder::default()
+                .flood_publish(true)
+                .build()
+                .unwrap();
             libp2p::gossipsub::Behaviour::new(
                 libp2p::gossipsub::MessageAuthenticity::Signed(keypair.clone()),
                 config,
