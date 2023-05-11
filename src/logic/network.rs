@@ -36,6 +36,7 @@ impl TheManLogic {
                                     let _ = self.sender.try_send(Message::KademliaQueryProgress(
                                         id, result, stats, step,
                                     ));
+                                    self.egui_ctx.request_repaint()
                                 }
                             }
                         }
@@ -65,14 +66,17 @@ impl TheManLogic {
                         libp2p::gossipsub::Event::Message { message, .. } => {
                             let topic = message.topic.clone();
                             let _ = self.sender.try_send(Message::NewMessage(topic, message));
+                            self.egui_ctx.request_repaint();
                         }
                         libp2p::gossipsub::Event::Subscribed { peer_id, topic } => {
                             let _ = self.sender.try_send(Message::NewSubscribed(peer_id, topic));
+                            self.egui_ctx.request_repaint();
                         }
                         libp2p::gossipsub::Event::Unsubscribed { peer_id, topic } => {
                             let _ = self
                                 .sender
                                 .try_send(Message::DestroySubscriber(peer_id, topic));
+                            self.egui_ctx.request_repaint();
                         }
                         libp2p::gossipsub::Event::GossipsubNotSupported { .. } => {}
                     },
@@ -101,6 +105,7 @@ impl TheManLogic {
                         if let Some(peer) = self.state.peers.get_mut(&event.peer) {
                             peer.ping = Some(event.result);
                         }
+                        self.egui_ctx.request_repaint();
                     }
                 }
             }
@@ -129,6 +134,7 @@ impl TheManLogic {
             let _ = self
                 .sender
                 .try_send(Message::SwarmStatus(account.swarm.network_info()));
+            self.egui_ctx.request_repaint()
         }
     }
 }

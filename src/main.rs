@@ -99,13 +99,14 @@ async fn main() {
             );
 
             creator.egui_ctx.set_fonts(font_def);
+            let egui_ctx = creator.egui_ctx.clone();
 
             let (gui_sender, logic_reciver) = tokio::sync::mpsc::channel::<Message>(255);
             let (logic_sender, gui_reciver) = tokio::sync::mpsc::channel(255);
 
             *lo.lock().unwrap() = Some(tokio::spawn(async {
                 let state: TheManState = state.into();
-                let logic = TheManLogic::new(state, gui_sender, gui_reciver);
+                let logic = TheManLogic::new(state, gui_sender, gui_reciver, egui_ctx);
                 logic.run().await;
             }));
 

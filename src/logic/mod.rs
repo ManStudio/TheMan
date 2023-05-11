@@ -16,10 +16,16 @@ pub struct TheManLogic {
     pub bootstrap: Option<libp2p::kad::QueryId>,
     pub subscribed: Vec<TopicHash>,
     pub registration_query: Option<libp2p::kad::QueryId>,
+    pub egui_ctx: eframe::egui::Context,
 }
 
 impl TheManLogic {
-    pub fn new(state: TheManState, sender: Sender<Message>, reciver: Receiver<Message>) -> Self {
+    pub fn new(
+        state: TheManState,
+        sender: Sender<Message>,
+        reciver: Receiver<Message>,
+        egui_ctx: eframe::egui::Context,
+    ) -> Self {
         Self {
             state,
             sender,
@@ -27,6 +33,7 @@ impl TheManLogic {
             bootstrap: None,
             subscribed: Vec::new(),
             registration_query: None,
+            egui_ctx,
         }
     }
 

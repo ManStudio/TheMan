@@ -145,7 +145,7 @@ impl eframe::App for TheMan {
 
         self.tab_manager.ui(ctx, &mut self.state);
 
-        ctx.request_repaint_after(Duration::from_secs(1) / 30)
+        // ctx.request_repaint_after(Duration::from_secs(1) / 30)
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
