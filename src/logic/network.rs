@@ -10,41 +10,98 @@ impl TheManLogic {
         match event {
             libp2p::swarm::SwarmEvent::Behaviour(event) => {
                 match event {
-                    BehaviourEvent::Kademlia(event) => match event {
-                        libp2p::kad::KademliaEvent::InboundRequest { .. } => {
-                            // println!("Request: {request:?}");
-                        }
-                        libp2p::kad::KademliaEvent::OutboundQueryProgressed {
-                            id,
-                            step,
-                            result,
-                            stats,
-                        } => {
-                            if let Some(account) = &mut self.state.account {
-                                if id == self.bootstrap.unwrap() {
-                                    if step.last {
-                                        self.bootstrap = Some(
-                                            account
-                                                .swarm
-                                                .behaviour_mut()
-                                                .kademlia
-                                                .bootstrap()
-                                                .unwrap(),
+                    BehaviourEvent::Kademlia(event) => {
+                        match event {
+                            libp2p::kad::KademliaEvent::InboundRequest { .. } => {
+                                // println!("Request: {request:?}");
+                            }
+                            libp2p::kad::KademliaEvent::OutboundQueryProgressed {
+                                id,
+                                step,
+                                result,
+                                stats,
+                            } => {
+                                if let Some(account) = &mut self.state.account {
+                                    if id == self.bootstrap.unwrap() {
+                                        if step.last {
+                                            self.bootstrap = Some(
+                                                account
+                                                    .swarm
+                                                    .behaviour_mut()
+                                                    .kademlia
+                                                    .bootstrap()
+                                                    .unwrap(),
+                                            );
+                                        }
+                                    } else {
+                                        if let Some(registration_1) =
+                                            self.registration_step_1_query.take()
+                                        {
+                                            if registration_1.0 == id {
+                                                const SECS: u64 = 60 * 60 * 24 * 3;
+                                                let instant = std::time::Instant::now()
+                                                    + std::time::Duration::from_secs(SECS);
+                                                self.registration_query = account
+                                                    .swarm
+                                                    .behaviour_mut()
+                                                    .kademlia
+                                                    .put_record(
+                                                        libp2p::kad::Record {
+                                                            key: libp2p::kad::RecordKey::new(
+                                                                &libp2p::kad::record::Key::new(
+                                                                    &registration_1.1,
+                                                                ),
+                                                            ),
+                                                            value: account.peer_id.to_bytes(),
+                                                            publisher: None,
+                                                            expires: Some(instant),
+                                                        },
+                                                        libp2p::kad::Quorum::Majority,
+                                                    )
+                                                    .map_or_else(
+                                                        |e| {
+                                                            eprintln!(
+                                                                "Cannot register itself: {e:?}"
+                                                            );
+                                                            None
+                                                        },
+                                                        Some,
+                                                    );
+                                                account.expires = instant;
+                                                if let Some(acc) =
+                                                    self.state.accounts.get_mut(account.index)
+                                                {
+                                                    acc.expires = chrono::Utc::now()
+                                                        + chrono::Duration::from_std(
+                                                            account.expires.duration_since(
+                                                                std::time::Instant::now(),
+                                                            ),
+                                                        )
+                                                        .unwrap_or_else(|_| {
+                                                            chrono::Duration::zero()
+                                                        })
+                                                }
+                                                let _ = self.sender.try_send(Message::Accounts(
+                                                    self.state.accounts.clone(),
+                                                ));
+                                            } else {
+                                                self.registration_step_1_query =
+                                                    Some(registration_1)
+                                            }
+                                        }
+                                        let _ = self.sender.try_send(
+                                            Message::KademliaQueryProgress(id, result, stats, step),
                                         );
+                                        self.egui_ctx.request_repaint()
                                     }
-                                } else {
-                                    let _ = self.sender.try_send(Message::KademliaQueryProgress(
-                                        id, result, stats, step,
-                                    ));
-                                    self.egui_ctx.request_repaint()
                                 }
                             }
+                            libp2p::kad::KademliaEvent::RoutingUpdated { .. } => {}
+                            libp2p::kad::KademliaEvent::UnroutablePeer { .. } => {}
+                            libp2p::kad::KademliaEvent::RoutablePeer { .. } => {}
+                            libp2p::kad::KademliaEvent::PendingRoutablePeer { .. } => {}
                         }
-                        libp2p::kad::KademliaEvent::RoutingUpdated { .. } => {}
-                        libp2p::kad::KademliaEvent::UnroutablePeer { .. } => {}
-                        libp2p::kad::KademliaEvent::RoutablePeer { .. } => {}
-                        libp2p::kad::KademliaEvent::PendingRoutablePeer { .. } => {}
-                    },
+                    }
                     BehaviourEvent::Identify(event) => {
                         match event {
                             libp2p::identify::Event::Received { peer_id, info } => {

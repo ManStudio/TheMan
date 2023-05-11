@@ -214,6 +214,11 @@ impl TheManLogic {
                     let mut hasher = libp2p::multihash::Sha2_256::default();
                     hasher.update(name.as_bytes());
                     let output = hasher.finalize();
+                    account
+                        .swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .get_closest_peers(output.to_vec());
                     let query_id = account
                         .swarm
                         .behaviour_mut()

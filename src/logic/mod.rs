@@ -16,6 +16,7 @@ pub struct TheManLogic {
     pub bootstrap: Option<libp2p::kad::QueryId>,
     pub subscribed: Vec<TopicHash>,
     pub registration_query: Option<libp2p::kad::QueryId>,
+    pub registration_step_1_query: Option<(libp2p::kad::QueryId, Vec<u8>)>,
     pub egui_ctx: eframe::egui::Context,
 }
 
@@ -34,6 +35,7 @@ impl TheManLogic {
             subscribed: Vec::new(),
             registration_query: None,
             egui_ctx,
+            registration_step_1_query: None,
         }
     }
 
@@ -62,26 +64,7 @@ impl TheManLogic {
                         let mut hasher = libp2p::multihash::Sha2_256::default();
                         hasher.update(account.name.as_bytes());
                         let hash = hasher.finalize();
-                        const SECS: u64 = 60 * 60 * 24 * 3;
-                        let instant = Instant::now() + Duration::from_secs(SECS);
-                        self.registration_query = account.swarm.behaviour_mut().kademlia.put_record(
-                            libp2p::kad::Record {
-                                key: libp2p::kad::RecordKey::new(&libp2p::bytes::Bytes::copy_from_slice(hash)),
-                                value: account.peer_id.to_bytes(),
-                                publisher: None,
-                                expires: Some(instant),
-                            },
-                            libp2p::kad::Quorum::Majority,
-                        ).map_or_else(|e|{eprintln!("Cannot register itself: {e:?}"); None}, Some);
-                        account.expires = instant;
-                        if let Some(acc) = self.state.accounts.get_mut(account.index) {
-                            acc.expires = chrono::Utc::now()
-                                + chrono::Duration::from_std(
-                                    account.expires.duration_since(Instant::now()),
-                                )
-                                .unwrap_or_else(|_| chrono::Duration::zero())
-                        }
-                        let _ = self.sender.try_send(Message::Accounts(self.state.accounts.clone()));
+                        self.registration_step_1_query = Some((account.swarm.behaviour_mut().kademlia.get_closest_peers(hash.to_vec()), hash.to_vec()));
                     }
                 }
             } else {

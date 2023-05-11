@@ -141,6 +141,7 @@ impl Tab for TabDiscover {
                                     self.peer_id = peer_id.to_string();
                                     self.waiting_for_peer = Some(peer_id);
                                     let _ = state.sender.try_send(Message::SearchPeerId(peer_id));
+                                    self.waiting_for_name = None;
                                     ui.label(format!("We will try to connect to: {}", peer_id));
                                 } else {
                                     ui.label("This is invalid but here is the information!");
