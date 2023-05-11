@@ -26,7 +26,7 @@ pub enum Message {
     BootNodes(Vec<(PeerId, NodeStatus, Vec<Multiaddr>)>),
     GetPeers,
     Peers(Vec<(PeerId, PeerStatus)>),
-    Peer(PeerId),
+    AccountActivate(usize, PeerId),
     SetAccount(usize),
     GetAccounts,
     Accounts(Vec<Account>),
@@ -129,14 +129,16 @@ impl TheManLogic {
                     .try_send(Message::Accounts(self.state.accounts.clone()));
                 self.egui_ctx.request_repaint()
             }
-            Message::SetAccount(account) => {
-                self.state.set_account(account);
+            Message::SetAccount(account_index) => {
+                self.state.set_account(account_index);
 
                 if let Some(account) = &mut self.state.account {
                     let _ = self
                         .sender
                         .try_send(Message::SwarmStatus(account.swarm.network_info()));
-                    let _ = self.sender.try_send(Message::Peer(account.peer_id));
+                    let _ = self
+                        .sender
+                        .try_send(Message::AccountActivate(account_index, account.peer_id));
 
                     let _ = account
                         .swarm

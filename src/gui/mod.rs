@@ -99,7 +99,12 @@ impl TheMan {
                 Message::SaveResponse(res) => self.state.save = Some(res),
                 Message::BootNodes(nodes) => self.state.bootnodes = nodes,
                 Message::Peers(peers) => self.state.peers = peers,
-                Message::Peer(peer_id) => self.state.peer_id = Some(peer_id),
+                Message::AccountActivate(account_index, peer_id) => {
+                    if let Some(account) = self.state.accounts.get(account_index) {
+                        self.state.name = Some(account.name.clone());
+                    }
+                    self.state.peer_id = Some(peer_id)
+                }
                 Message::Accounts(accounts) => self.state.accounts = accounts,
                 Message::Adresses(adresses) => self.state.adresses = adresses,
                 Message::ResSearchPeerId(peer_id, query_id) => {
@@ -144,8 +149,6 @@ impl eframe::App for TheMan {
         self.process_events();
 
         self.tab_manager.ui(ctx, &mut self.state);
-
-        // ctx.request_repaint_after(Duration::from_secs(1) / 30)
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
