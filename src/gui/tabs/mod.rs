@@ -8,6 +8,8 @@ mod discover;
 mod message_channel;
 mod my_self;
 mod peers;
+mod query;
+mod querys;
 mod swarm_status;
 
 pub use account::TabAccount;
@@ -18,6 +20,8 @@ pub use discover::TabDiscover;
 pub use message_channel::TabMessageChannel;
 pub use my_self::TabMySelf;
 pub use peers::TabPeers;
+pub use query::TabQuery;
+pub use querys::TabQuerys;
 pub use swarm_status::TabSwarmStatus;
 
 use super::TheManGuiState;

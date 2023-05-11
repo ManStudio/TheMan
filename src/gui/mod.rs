@@ -63,6 +63,8 @@ impl TheMan {
         tab_manager.register::<TabAccount>(); // 6
         tab_manager.register::<TabMessageChannel>(); // 7
         tab_manager.register::<TabChannels>(); // 8
+        tab_manager.register::<TabQuery>(); // 9
+        tab_manager.register::<TabQuerys>(); // 10
 
         tab_manager.execute("o0;o1;o2;o3;o4");
 
