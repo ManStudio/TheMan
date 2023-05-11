@@ -30,6 +30,7 @@ pub struct TheManGuiState {
     pub accounts: Vec<Account>,
     pub kademlia_query_progress: HashMap<QueryId, (QueryResult, QueryStats, ProgressStep)>,
     pub query_id_for_peers: HashMap<PeerId, QueryId>,
+    pub query_id_for_names: HashMap<String, QueryId>,
     pub messages: HashMap<TopicHash, Vec<libp2p::gossipsub::Message>>,
     pub subscribers: HashMap<TopicHash, Vec<PeerId>>,
 }
@@ -81,6 +82,7 @@ impl TheMan {
                 messages: HashMap::new(),
                 subscribers: HashMap::new(),
                 name: None,
+                query_id_for_names: HashMap::new(),
             },
             should_close: false,
             one_time: false,
@@ -114,6 +116,9 @@ impl TheMan {
                     self.state
                         .kademlia_query_progress
                         .insert(query_id, (result, stats, step));
+                }
+                Message::ResSearchByName(name, query_id) => {
+                    self.state.query_id_for_names.insert(name, query_id);
                 }
                 Message::NewMessage(topic, message) => {
                     if let Some(messages) = self.state.messages.get_mut(&topic) {

@@ -56,6 +56,9 @@ impl TheManLogic {
                         self.on_event(event).await;
                     }
                     _ = tokio::time::sleep_until(renew_account) => {
+                        if 600 > account.swarm.network_info().num_peers(){
+                            continue;
+                        }
                         let mut hasher = libp2p::multihash::Sha2_256::default();
                         hasher.update(account.name.as_bytes());
                         let hash = hasher.finalize();
@@ -68,7 +71,7 @@ impl TheManLogic {
                                 publisher: None,
                                 expires: Some(instant),
                             },
-                            libp2p::kad::Quorum::One,
+                            libp2p::kad::Quorum::Majority,
                         ).map_or_else(|e|{eprintln!("Cannot register itself: {e:?}"); None}, Some);
                         account.expires = instant;
                         if let Some(acc) = self.state.accounts.get_mut(account.index) {

@@ -5,6 +5,7 @@ use libp2p::{
     gossipsub::{IdentTopic, TopicHash},
     kad::{kbucket::NodeStatus, ProgressStep, QueryId, QueryResult, QueryStats},
     multiaddr::Protocol,
+    multihash::Hasher,
     swarm::AddressRecord,
     Multiaddr, PeerId,
 };
@@ -35,6 +36,8 @@ pub enum Message {
     Adresses(Vec<AddressRecord>),
     SearchPeerId(PeerId),
     ResSearchPeerId(PeerId, QueryId),
+    SearchByName(String),
+    ResSearchByName(String, QueryId),
     KademliaQueryProgress(QueryId, QueryResult, QueryStats, ProgressStep),
     SubscribeTopic(IdentTopic),
     UnsubscibeTopic(IdentTopic),
@@ -204,6 +207,21 @@ impl TheManLogic {
                         .gossipsub
                         .publish(topic, message);
                     self.egui_ctx.request_repaint()
+                }
+            }
+            Message::SearchByName(name) => {
+                if let Some(account) = &mut self.state.account {
+                    let mut hasher = libp2p::multihash::Sha2_256::default();
+                    hasher.update(name.as_bytes());
+                    let output = hasher.finalize();
+                    let query_id = account
+                        .swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .get_record(libp2p::kad::record::Key::new(&output));
+                    let _ = self
+                        .sender
+                        .try_send(Message::ResSearchByName(name, query_id));
                 }
             }
             _ => {}
