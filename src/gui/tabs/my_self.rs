@@ -22,10 +22,20 @@ impl Tab for TabMySelf {
         }
         if let Some(peer_id) = &state.peer_id {
             if ui
-                .selectable_label(false, format!("PeerId {}", peer_id))
+                .selectable_label(false, format!("PeerId: {}", peer_id))
                 .clicked()
             {
                 ui.output_mut(|o| o.copied_text = format!("{}", peer_id));
+            }
+        } else {
+            ui.label("You are not connected to any account!");
+        }
+        if let Some(name) = &state.name {
+            if ui
+                .selectable_label(false, format!("Name: {}", name))
+                .clicked()
+            {
+                ui.output_mut(|o| o.copied_text = name.clone());
             }
         }
         ui.label("Adresses:");

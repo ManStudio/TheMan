@@ -64,6 +64,14 @@ impl TheManLogic {
                             libp2p::kad::Quorum::One,
                         ).map_or_else(|e|{eprintln!("Cannot register itself: {e:?}"); None}, Some);
                         account.expires = instant;
+                        if let Some(acc) = self.state.accounts.get_mut(account.index) {
+                            acc.expires = chrono::Utc::now()
+                                + chrono::Duration::from_std(
+                                    account.expires.duration_since(Instant::now()),
+                                )
+                                .unwrap_or_else(|_| chrono::Duration::zero())
+                        }
+                        let _ = self.sender.try_send(Message::Accounts(self.state.accounts.clone()));
                     }
                 }
             } else {

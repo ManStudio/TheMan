@@ -30,8 +30,12 @@ impl Tab for TabAccount {
             }
         }
 
+        #[allow(clippy::blocks_in_if_conditions)]
         if ui
             .selectable_label(false, format!("Id: {}", self.peer_id))
+            .on_hover_ui(|ui| {
+                ui.label("This is you public key!");
+            })
             .clicked()
         {
             ui.output_mut(|out| out.copied_text = self.peer_id.clone());
@@ -42,8 +46,18 @@ impl Tab for TabAccount {
             ui.text_edit_singleline(&mut self.name);
         });
 
+        let mut expires = chrono::Utc::now();
+        if let Some(account) = state.accounts.get(self.account_id) {
+            expires = account.expires;
+        }
+
+        ui.label(format!("Expires on: {}", expires.format("%d/%m/%Y %H:%M"))).on_hover_ui(|ui| {ui.label("That means that you should be connected to your accont at that time or some one else could get your name!");});
+
         if ui.button("Save").clicked() {
             if let Some(account) = state.accounts.get_mut(self.account_id) {
+                if account.name == self.name {
+                    account.expires = chrono::Utc::now();
+                }
                 account.name = self.name.clone();
                 state.send(Message::UpdateAccounts(state.accounts.clone()));
             }
