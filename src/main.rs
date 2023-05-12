@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use gui::TheMan;
 use libp2p::identity::Keypair;
 use logic::{message::Message, TheManLogic};
@@ -12,9 +13,44 @@ pub mod logic;
 pub mod save_state;
 pub mod state;
 
+use cpal::FromSample;
+
 #[tokio::main]
 async fn main() {
     env_logger::init();
+    let cpal = cpal::default_host();
+
+    let device = cpal.default_output_device().expect("Output device");
+    let config = device.default_output_config().expect("Output config");
+
+    let sample_rate = config.sample_rate().0 as f32;
+    let channels = config.channels() as usize;
+
+    let mut sample_clock = 0.0;
+    let mut next_value = move || {
+        sample_clock = (sample_clock + 1.0) % sample_rate;
+        (sample_clock * 440.0 * 2.0 * std::f32::consts::PI / sample_rate).sin()
+    };
+
+    std::thread::spawn(move || {
+        let stream = device
+            .build_output_stream(
+                &config.into(),
+                move |data: &mut [f32], _| {
+                    for frame in data.chunks_mut(channels) {
+                        let value: f32 = f32::from_sample_(next_value());
+                        for sample in frame.iter_mut() {
+                            *sample = value;
+                        }
+                    }
+                },
+                |_| (),
+                None,
+            )
+            .unwrap();
+        let _ = stream.play();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    });
 
     let logic: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>> = Arc::new(Mutex::new(None));
     let lo = logic.clone();
