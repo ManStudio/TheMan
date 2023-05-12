@@ -5,7 +5,6 @@ use libp2p::{
     gossipsub::{IdentTopic, TopicHash},
     kad::{kbucket::NodeStatus, ProgressStep, QueryId, QueryResult, QueryStats},
     multiaddr::Protocol,
-    multihash::Hasher,
     swarm::AddressRecord,
     Multiaddr, PeerId,
 };

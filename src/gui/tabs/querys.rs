@@ -20,7 +20,7 @@ impl Tab for TabQuerys {
         let mut message = None;
 
         let len = state.kademlia_query_progress.len();
-        let mut vec = state.kademlia_query_progress.iter().collect::<Vec<_>>();
+        let vec = state.kademlia_query_progress.iter().collect::<Vec<_>>();
         egui::ScrollArea::both().show_rows(
             ui,
             ui.text_style_height(&egui::TextStyle::Body),
@@ -33,7 +33,7 @@ impl Tab for TabQuerys {
                                 .selectable_label(
                                     false,
                                     format!(
-                                        "{i} {}",
+                                        "{i} {query_id:?} {}",
                                         if query.2.last { "Finished" } else { "Waiting" }
                                     ),
                                 )
@@ -50,7 +50,7 @@ impl Tab for TabQuerys {
         message
     }
 
-    fn recive(&mut self, message: String) {}
+    fn recive(&mut self, _message: String) {}
 
     fn clone_box(&self) -> Box<dyn Tab> {
         Box::<Self>::default()

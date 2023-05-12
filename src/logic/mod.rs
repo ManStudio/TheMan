@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::state::TheManState;
 use libp2p::{futures::StreamExt, gossipsub::TopicHash, multihash::Hasher};

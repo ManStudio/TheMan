@@ -34,7 +34,7 @@ impl Tab for TabDiscover {
                 let key = hasher.finalize().to_vec();
                 self.waiting_for_key = Some(key.clone());
                 self.waiting_for_record = None;
-                state.send(Message::SearchForKey(key.clone()));
+                state.send(Message::SearchForKey(key));
                 self.searching_by_name = true;
             }
         });

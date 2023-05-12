@@ -60,7 +60,7 @@ impl Tab for TabQuery {
                 libp2p::kad::QueryResult::StartProviding(res) => match res {
                     Ok(res) => {
                         ui.label("StartProviding");
-                        ui.label("{res:?}");
+                        ui.label(format!("{res:?}"));
                     }
                     Err(err) => {
                         ui.label("StartProviding Err");
