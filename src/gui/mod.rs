@@ -29,8 +29,8 @@ pub struct TheManGuiState {
     pub adresses: Vec<AddressRecord>,
     pub accounts: Vec<Account>,
     pub kademlia_query_progress: HashMap<QueryId, (QueryResult, QueryStats, ProgressStep)>,
-    pub query_id_for_peers: HashMap<PeerId, QueryId>,
-    pub query_id_for_names: HashMap<String, QueryId>,
+    pub query_id_for_key: HashMap<Vec<u8>, QueryId>,
+    pub query_id_for_record: HashMap<Vec<u8>, QueryId>,
     pub messages: HashMap<TopicHash, Vec<libp2p::gossipsub::Message>>,
     pub subscribers: HashMap<TopicHash, Vec<PeerId>>,
 }
@@ -80,11 +80,11 @@ impl TheMan {
                 accounts: Vec::new(),
                 adresses: Vec::new(),
                 kademlia_query_progress: HashMap::new(),
-                query_id_for_peers: HashMap::new(),
+                query_id_for_key: HashMap::new(),
                 messages: HashMap::new(),
                 subscribers: HashMap::new(),
                 name: None,
-                query_id_for_names: HashMap::new(),
+                query_id_for_record: HashMap::new(),
             },
             should_close: false,
             one_time: false,
@@ -111,16 +111,16 @@ impl TheMan {
                 }
                 Message::Accounts(accounts) => self.state.accounts = accounts,
                 Message::Adresses(adresses) => self.state.adresses = adresses,
-                Message::ResSearchPeerId(peer_id, query_id) => {
-                    self.state.query_id_for_peers.insert(peer_id, query_id);
+                Message::ResSearchForKey(key, query_id) => {
+                    self.state.query_id_for_key.insert(key, query_id);
                 }
                 Message::KademliaQueryProgress(query_id, result, stats, step) => {
                     self.state
                         .kademlia_query_progress
                         .insert(query_id, (result, stats, step));
                 }
-                Message::ResSearchByName(name, query_id) => {
-                    self.state.query_id_for_names.insert(name, query_id);
+                Message::ResSearchForRecord(key, query_id) => {
+                    self.state.query_id_for_record.insert(key, query_id);
                 }
                 Message::NewMessage(topic, message) => {
                     if let Some(messages) = self.state.messages.get_mut(&topic) {

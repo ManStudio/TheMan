@@ -15,7 +15,7 @@ pub struct TheManLogic {
     pub reciver: Receiver<Message>,
     pub bootstrap: Option<libp2p::kad::QueryId>,
     pub subscribed: Vec<TopicHash>,
-    pub registration_query: Option<libp2p::kad::QueryId>,
+    pub registration_query: Option<(libp2p::kad::QueryId, Instant)>,
     pub registration_step_1_query: Option<(libp2p::kad::QueryId, Vec<u8>)>,
     pub egui_ctx: eframe::egui::Context,
 }
@@ -58,6 +58,7 @@ impl TheManLogic {
                         self.on_event(event).await;
                     }
                     _ = tokio::time::sleep_until(renew_account) => {
+                        if self.registration_step_1_query.is_some() && self.registration_step_1_query.is_some(){continue}
                         if 600 > account.swarm.network_info().num_peers(){
                             continue;
                         }

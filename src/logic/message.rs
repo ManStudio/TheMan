@@ -34,10 +34,10 @@ pub enum Message {
     UpdateAccounts(Vec<Account>),
     GetAdresses,
     Adresses(Vec<AddressRecord>),
-    SearchPeerId(PeerId),
-    ResSearchPeerId(PeerId, QueryId),
-    SearchByName(String),
-    ResSearchByName(String, QueryId),
+    SearchForKey(Vec<u8>),
+    ResSearchForKey(Vec<u8>, QueryId),
+    SearchForRecord(Vec<u8>),
+    ResSearchForRecord(Vec<u8>, QueryId),
     KademliaQueryProgress(QueryId, QueryResult, QueryStats, ProgressStep),
     SubscribeTopic(IdentTopic),
     UnsubscibeTopic(IdentTopic),
@@ -175,16 +175,16 @@ impl TheManLogic {
                     .try_send(Message::Accounts(self.state.accounts.clone()));
                 self.egui_ctx.request_repaint()
             }
-            Message::SearchPeerId(peer_id) => {
+            Message::SearchForKey(peer_id) => {
                 if let Some(account) = &mut self.state.account {
                     let query_id = account
                         .swarm
                         .behaviour_mut()
                         .kademlia
-                        .get_closest_peers(peer_id);
+                        .get_closest_peers(peer_id.clone());
                     let _ = self
                         .sender
-                        .try_send(Message::ResSearchPeerId(peer_id, query_id));
+                        .try_send(Message::ResSearchForKey(peer_id, query_id));
                     self.egui_ctx.request_repaint()
                 }
             }
@@ -209,24 +209,16 @@ impl TheManLogic {
                     self.egui_ctx.request_repaint()
                 }
             }
-            Message::SearchByName(name) => {
+            Message::SearchForRecord(key) => {
                 if let Some(account) = &mut self.state.account {
-                    let mut hasher = libp2p::multihash::Sha2_256::default();
-                    hasher.update(name.as_bytes());
-                    let output = hasher.finalize();
-                    account
-                        .swarm
-                        .behaviour_mut()
-                        .kademlia
-                        .get_closest_peers(output.to_vec());
                     let query_id = account
                         .swarm
                         .behaviour_mut()
                         .kademlia
-                        .get_record(libp2p::kad::record::Key::new(&output));
+                        .get_record(libp2p::kad::record::Key::new(&key));
                     let _ = self
                         .sender
-                        .try_send(Message::ResSearchByName(name, query_id));
+                        .try_send(Message::ResSearchForRecord(key, query_id));
                 }
             }
             _ => {}

@@ -53,7 +53,7 @@ impl TheManLogic {
                                                                 ),
                                                             ),
                                                             value: account.peer_id.to_bytes(),
-                                                            publisher: None,
+                                                            publisher: Some(account.peer_id),
                                                             expires: Some(instant),
                                                         },
                                                         libp2p::kad::Quorum::Majority,
@@ -65,28 +65,46 @@ impl TheManLogic {
                                                             );
                                                             None
                                                         },
-                                                        Some,
+                                                        |q| Some((q, instant)),
                                                     );
-                                                account.expires = instant;
-                                                if let Some(acc) =
-                                                    self.state.accounts.get_mut(account.index)
-                                                {
-                                                    acc.expires = chrono::Utc::now()
-                                                        + chrono::Duration::from_std(
-                                                            account.expires.duration_since(
-                                                                std::time::Instant::now(),
-                                                            ),
-                                                        )
-                                                        .unwrap_or_else(|_| {
-                                                            chrono::Duration::zero()
-                                                        })
-                                                }
-                                                let _ = self.sender.try_send(Message::Accounts(
-                                                    self.state.accounts.clone(),
-                                                ));
                                             } else {
                                                 self.registration_step_1_query =
                                                     Some(registration_1)
+                                            }
+
+                                            if let Some((query_id, instant)) =
+                                                self.registration_query.take()
+                                            {
+                                                if let libp2p::kad::QueryResult::PutRecord(_) =
+                                                    result
+                                                {
+                                                    if query_id == id {
+                                                        account.expires = instant;
+                                                        if let Some(acc) = self
+                                                            .state
+                                                            .accounts
+                                                            .get_mut(account.index)
+                                                        {
+                                                            acc.expires = chrono::Utc::now()
+                                                                + chrono::Duration::from_std(
+                                                                    account.expires.duration_since(
+                                                                        std::time::Instant::now(),
+                                                                    ),
+                                                                )
+                                                                .unwrap_or_else(|_| {
+                                                                    chrono::Duration::zero()
+                                                                })
+                                                        }
+                                                        let _ = self.sender.try_send(
+                                                            Message::Accounts(
+                                                                self.state.accounts.clone(),
+                                                            ),
+                                                        );
+                                                    }
+                                                } else {
+                                                    self.registration_query =
+                                                        Some((query_id, instant))
+                                                }
                                             }
                                         }
                                         let _ = self.sender.try_send(
