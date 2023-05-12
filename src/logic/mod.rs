@@ -57,16 +57,16 @@ impl TheManLogic {
                     event = account.swarm.select_next_some() => {
                         self.on_event(event).await;
                     }
-                    _ = tokio::time::sleep_until(renew_account) => {
-                        if self.registration_step_1_query.is_some() && self.registration_step_1_query.is_some(){continue}
-                        if 600 > account.swarm.network_info().num_peers(){
-                            continue;
-                        }
-                        let mut hasher = libp2p::multihash::Sha2_256::default();
-                        hasher.update(account.name.as_bytes());
-                        let hash = hasher.finalize();
-                        self.registration_step_1_query = Some((account.swarm.behaviour_mut().kademlia.get_closest_peers(hash.to_vec()), hash.to_vec()));
-                    }
+                    // _ = tokio::time::sleep_until(renew_account) => {
+                    //     if self.registration_step_1_query.is_some() && self.registration_step_1_query.is_some(){continue}
+                    //     if 600 > account.swarm.network_info().num_peers(){
+                    //         continue;
+                    //     }
+                    //     let mut hasher = libp2p::multihash::Sha2_256::default();
+                    //     hasher.update(account.name.as_bytes());
+                    //     let hash = hasher.finalize();
+                    //     self.registration_step_1_query = Some((account.swarm.behaviour_mut().kademlia.get_closest_peers(hash.to_vec()), hash.to_vec()));
+                    // }
                 }
             } else {
                 tokio::select! {
