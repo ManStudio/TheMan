@@ -33,6 +33,7 @@ impl Tab for TabDiscover {
                 hasher.update(self.name.as_bytes());
                 let key = hasher.finalize().to_vec();
                 self.waiting_for_key = Some(key.clone());
+                self.waiting_for_record = None;
                 state.send(Message::SearchForKey(key.clone()));
                 self.searching_by_name = true;
             }
@@ -47,6 +48,8 @@ impl Tab for TabDiscover {
             if ui.button("Search").clicked() {
                 if let Ok(peer_id) = self.peer_id.parse::<PeerId>() {
                     self.waiting_for_key = Some(peer_id.to_bytes());
+                    self.waiting_for_record = None;
+                    self.searching_by_name = false;
                     state.send(Message::SearchForKey(peer_id.to_bytes()));
                 } else {
                     eprintln!("Cannot Parse PeerId");
