@@ -100,6 +100,11 @@ impl TheManLogic {
                                                                 self.state.accounts.clone(),
                                                             ),
                                                         );
+                                                    } else {
+                                                        account.expires = std::time::Instant::now()
+                                                            + std::time::Duration::from_secs(
+                                                                60 * 15,
+                                                            );
                                                     }
                                                 } else {
                                                     self.registration_query =
