@@ -920,6 +920,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "bytes-kman"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c91188683a99084a2cddebff5630ec04bfddd0d3e9baed22c4b0a22030a41697"
+dependencies = [
+ "bytes-kman-derive",
+]
+
+[[package]]
+name = "bytes-kman-derive"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a88ef6e2ca731e859b44b2dbd4b83857e6505046e362800cc1530b107b7bc1ee"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "calloop"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5436,6 +5456,7 @@ dependencies = [
 name = "the-man"
 version = "0.1.0"
 dependencies = [
+ "bytes-kman",
  "chrono",
  "cpal",
  "eframe",

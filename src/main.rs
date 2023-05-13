@@ -8,6 +8,7 @@ use logic::{message::Message, TheManLogic};
 use save_state::{Account, TheManSaveState};
 use state::TheManState;
 
+pub mod audio;
 pub mod gui;
 pub mod logic;
 pub mod save_state;

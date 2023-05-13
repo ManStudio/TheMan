@@ -46,6 +46,11 @@ pub enum Message {
     SendMessage(TopicHash, Vec<u8>),
     FindMe,
     ShutDown,
+
+    CreateInputChannel { id: usize, codec: String },
+    CreateOutputChannel { id: usize, codec: String },
+    ResCreateInputChannel(usize, String),
+    ResCreateOutputChannel(usize, String),
 }
 
 unsafe impl Send for Message {}

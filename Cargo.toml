@@ -5,7 +5,16 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[profile.release]
+codegen-units=1
+opt-level = 'z'
+
+[profile.release.package."*"]
+opt-level = 3
+codegen-units=1
+
 [dependencies]
+bytes-kman = "0.2.0"
 chrono = { version = "0.4.24", features = ["serde"] }
 cpal = { version = "0.15.2", features = ["num-traits"] }
 eframe = { version = "0.21", features = ["persistence", "ron"] }
