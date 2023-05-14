@@ -17,7 +17,20 @@ use crate::{
 use super::TheManLogic;
 
 #[derive(Debug)]
+pub enum GuiMessage {}
+
+#[derive(Debug)]
+pub enum AudioMessage {
+    CreateInputChannel { id: usize, codec: String },
+    CreateOutputChannel { id: usize, codec: String },
+    ResCreateInputChannel(usize, String),
+    ResCreateOutputChannel(usize, String),
+}
+
+#[derive(Debug)]
 pub enum Message {
+    Gui(GuiMessage),
+    Audio(AudioMessage),
     SwarmStatus(libp2p::swarm::NetworkInfo),
     Save,
     SaveResponse(Option<TheManSaveState>),
@@ -46,11 +59,6 @@ pub enum Message {
     SendMessage(TopicHash, Vec<u8>),
     FindMe,
     ShutDown,
-
-    CreateInputChannel { id: usize, codec: String },
-    CreateOutputChannel { id: usize, codec: String },
-    ResCreateInputChannel(usize, String),
-    ResCreateOutputChannel(usize, String),
 }
 
 unsafe impl Send for Message {}

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, time::Duration};
 
-use crate::Message;
+use crate::{logic::message::AudioMessage, Message};
 use cpal::{
     traits::{DeviceTrait, HostTrait},
     InputCallbackInfo, OutputCallbackInfo, SizedSample, StreamError,
@@ -112,14 +112,16 @@ impl Audio {
 
     fn process_logic(&mut self, event: Message) {
         match event {
-            Message::CreateInputChannel { id, codec } => {
+            Message::Audio(AudioMessage::CreateInputChannel { id, codec }) => {
                 let mut error = String::new();
                 if let Some(input_device) = &mut self.input_device {
                 } else {
                     error.push_str("No input device!\n");
                 }
                 self.logic_sender
-                    .try_send(Message::ResCreateInputChannel(id, error));
+                    .try_send(Message::Audio(AudioMessage::ResCreateInputChannel(
+                        id, error,
+                    )));
             }
             _ => {}
         }
