@@ -25,6 +25,10 @@ pub enum AudioMessage {
     CreateOutputChannel { id: usize, codec: String },
     ResCreateInputChannel(usize, String),
     ResCreateOutputChannel(usize, String),
+    DestroyInputChannel { id: usize },
+    DestroyOuputChannel { id: usize },
+    InputData { id: usize, data: Vec<u8> },
+    OutputData { id: usize, data: Vec<u8> },
 }
 
 #[derive(Debug)]
