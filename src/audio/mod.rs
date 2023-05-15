@@ -1,13 +1,18 @@
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use crate::{logic::message::AudioMessage, Message};
+use bytes_kman::TBytes;
 use cpal::{
     traits::{DeviceTrait, HostTrait},
     InputCallbackInfo, OutputCallbackInfo, SizedSample, StreamError,
 };
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use self::codec::Codec;
+use self::codec::{opus::CodecOpus, Codec};
 
 mod codec;
 
@@ -58,11 +63,16 @@ impl Device {
 
 pub struct Stream {
     pub codec: Box<dyn Codec>,
-    pub input: Option<cpal::Stream>,
+    pub stream: Option<cpal::Stream>,
     pub volume: f32,
     pub stream_type: StreamType,
     pub id: usize,
+    pub buffer: Vec<u8>,
+    pub sender: Sender<Message>,
 }
+
+unsafe impl Send for Stream {}
+unsafe impl Sync for Stream {}
 
 pub enum StreamType {
     Input,
@@ -71,10 +81,7 @@ pub enum StreamType {
 
 pub struct Audio {
     pub logic_sender: Sender<Message>,
-    pub logic_reciver: Receiver<Message>,
-    pub gui_sender: Sender<Message>,
-    pub gui_reciver: Receiver<Message>,
-    pub egui_ctx: eframe::egui::Context,
+    pub logic_receiver: Receiver<Message>,
 
     pub host: Option<cpal::Host>,
 
@@ -82,39 +89,97 @@ pub struct Audio {
     pub input_device: Option<Device>,
 
     pub codecs: HashMap<String, Box<dyn Codec>>,
-    pub streams: Vec<Stream>,
+    pub streams: Vec<Arc<RwLock<Stream>>>,
 }
 
 impl Audio {
+    pub fn new(logic_sender: Sender<Message>, logic_receiver: Receiver<Message>) -> Self {
+        Self {
+            logic_sender,
+            logic_receiver,
+            host: None,
+            output_device: None,
+            input_device: None,
+            codecs: HashMap::new(),
+            streams: Vec::new(),
+        }
+    }
     pub async fn run(mut self) {
         self.host = Some(cpal::default_host());
         self.try_get_default_devices();
 
+        self.codecs
+            .insert("opus".into(), Box::new(CodecOpus::default()));
+
+        println!("Audio thread started!");
+
         loop {
             tokio::select! {
-                Some(event) = self.logic_reciver.recv() => {
+                Some(event) = self.logic_receiver.recv() => {
                     if let Message::ShutDown = event{
                         self.shutdown();
                         break
                     }else{
-                        self.process_logic(event);
+                        self.process_logic(event).await;
                     }
-                }
-                Some(event) = self.gui_reciver.recv() => {
-                    self.process_gui(event);
                 }
 
             }
         }
     }
 
-    fn shutdown(&mut self) {}
+    fn shutdown(&mut self) {
+        println!("Audio thread cloasing");
 
-    fn process_logic(&mut self, event: Message) {
+        for stream in self.streams.drain(..) {
+            println!("Audio closing: {}", stream.read().unwrap().id);
+            let _ = stream.write().unwrap().stream.take();
+        }
+
+        println!("Audio thread shutdown succesfuly");
+    }
+
+    async fn process_logic(&mut self, event: Message) {
         match event {
             Message::Audio(AudioMessage::CreateInputChannel { id, codec }) => {
                 let mut error = String::new();
                 if let Some(input_device) = &mut self.input_device {
+                    if let Some(codec) = self.codecs.get(&codec) {
+                        let mut stream = Arc::new(RwLock::new(Stream {
+                            codec: codec.c(),
+                            stream: None,
+                            volume: 1.0,
+                            stream_type: StreamType::Input,
+                            id,
+                            buffer: Vec::new(),
+                            sender: self.logic_sender.clone(),
+                        }));
+                        let str = stream.clone();
+                        let cpal_stream = input_device
+                            .build_input_stream(
+                                move |input: &[f32], _| {
+                                    let volume = str.read().unwrap().volume;
+                                    let _ = str.read().unwrap().sender.try_send(Message::Audio(
+                                        AudioMessage::InputData {
+                                            id,
+                                            data: str.read().unwrap().codec.encode(
+                                                input
+                                                    .iter()
+                                                    .map(|d| d * volume)
+                                                    .collect::<Vec<f32>>(),
+                                            ),
+                                        },
+                                    ));
+                                },
+                                |_| panic!("Input stream error!"),
+                                None,
+                            )
+                            .unwrap();
+                        stream.write().unwrap().stream = Some(cpal_stream);
+                        self.streams.push(stream);
+                    } else {
+                        error.push_str("Invalid codec!\n");
+                    }
                 } else {
                     error.push_str("No input device!\n");
                 }
@@ -123,12 +188,59 @@ impl Audio {
                         id, error,
                     )));
             }
-            _ => {}
-        }
-    }
-
-    fn process_gui(&mut self, event: Message) {
-        match event {
+            Message::Audio(AudioMessage::CreateOutputChannel { id, codec }) => {
+                let mut error = String::new();
+                if let Some(output_device) = &mut self.output_device {
+                    if let Some(codec) = self.codecs.get(&codec) {
+                        let mut stream = Arc::new(RwLock::new(Stream {
+                            codec: codec.c(),
+                            stream: None,
+                            volume: 1.0,
+                            stream_type: StreamType::Output,
+                            id,
+                            buffer: Vec::new(),
+                            sender: self.logic_sender.clone(),
+                        }));
+                        let str = stream.clone();
+                        let cpal_stream = output_device
+                            .build_output_stream(
+                                move |output: &mut [f32], _| {
+                                    let volume = str.read().unwrap().volume;
+                                    let codec = str.read().unwrap().codec.c();
+                                    let mut buffer = {
+                                        let mut stre = str.write().unwrap();
+                                        let mut iter = stre.buffer.drain(..);
+                                        codec.decode(&mut iter)
+                                    };
+                                    buffer.resize(output.len(), 0.0);
+                                    output.copy_from_slice(
+                                        &buffer.drain(..).map(|e| e * volume).collect::<Vec<f32>>(),
+                                    );
+                                },
+                                |_| panic!("Output stream error!"),
+                                None,
+                            )
+                            .unwrap();
+                        stream.write().unwrap().stream = Some(cpal_stream);
+                        self.streams.push(stream);
+                    } else {
+                        error.push_str("Invalid codec!\n");
+                    }
+                } else {
+                    error.push_str("No output device!\n");
+                }
+                self.logic_sender
+                    .try_send(Message::Audio(AudioMessage::ResCreateOutputChannel(
+                        id, error,
+                    )));
+            }
+            Message::Audio(AudioMessage::OutputData { id, mut data }) => {
+                if let Some(stream) = self.streams.get(id) {
+                    stream.write().unwrap().buffer.append(&mut data);
+                } else {
+                    eprintln!("Invalid stream: {id}")
+                }
+            }
             _ => {}
         }
     }

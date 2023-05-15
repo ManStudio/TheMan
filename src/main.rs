@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use audio::Audio;
 use chrono::Utc;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use gui::TheMan;
@@ -14,47 +15,49 @@ pub mod logic;
 pub mod save_state;
 pub mod state;
 
-use cpal::FromSample;
-
 #[tokio::main]
 async fn main() {
     env_logger::init();
-    let cpal = cpal::default_host();
+    {
+        let cpal = cpal::default_host();
 
-    let device = cpal.default_output_device().expect("Output device");
-    let config = device.default_output_config().expect("Output config");
+        let device = cpal.default_output_device().expect("Output device");
+        let config = device.default_output_config().expect("Output config");
 
-    let sample_rate = config.sample_rate().0 as f32;
-    let channels = config.channels() as usize;
+        let sample_rate = config.sample_rate().0 as f32;
+        let channels = config.channels() as usize;
 
-    let mut sample_clock = 0.0;
-    let mut next_value = move || {
-        sample_clock = (sample_clock + 1.0) % sample_rate;
-        (sample_clock * 440.0 * 2.0 * std::f32::consts::PI / sample_rate).sin()
-    };
+        let mut sample_clock = 0.0;
+        let mut next_value = move || {
+            sample_clock = (sample_clock + 1.0) % sample_rate;
+            (sample_clock * 440.0 * 2.0 * std::f32::consts::PI / sample_rate).sin()
+        };
 
-    std::thread::spawn(move || {
-        let stream = device
-            .build_output_stream(
-                &config.into(),
-                move |data: &mut [f32], _| {
-                    for frame in data.chunks_mut(channels) {
-                        let value: f32 = f32::from_sample_(next_value());
-                        for sample in frame.iter_mut() {
-                            *sample = value;
+        std::thread::spawn(move || {
+            let stream = device
+                .build_output_stream(
+                    &config.into(),
+                    move |data: &mut [f32], _| {
+                        for frame in data.chunks_mut(channels) {
+                            let value: f32 = next_value();
+                            for sample in frame.iter_mut() {
+                                *sample = value;
+                            }
                         }
-                    }
-                },
-                |_| (),
-                None,
-            )
-            .unwrap();
-        let _ = stream.play();
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    });
+                    },
+                    |_| (),
+                    None,
+                )
+                .unwrap();
+            let _ = stream.play();
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        });
+    }
 
     let logic: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>> = Arc::new(Mutex::new(None));
     let lo = logic.clone();
+    let audio: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>> = Arc::new(Mutex::new(None));
+    let au = audio.clone();
 
     eframe::run_native(
         "TheMan",
@@ -138,23 +141,45 @@ async fn main() {
             creator.egui_ctx.set_fonts(font_def);
             let egui_ctx = creator.egui_ctx.clone();
 
-            let (gui_sender, logic_reciver) = tokio::sync::mpsc::channel::<Message>(255);
-            let (logic_sender, gui_reciver) = tokio::sync::mpsc::channel(255);
+            use tokio::sync::mpsc::channel;
+            let (gui_logic_sender, gui_logic_receiver) = channel(255);
+            let (logic_gui_sender, logic_gui_receiver) = channel(255);
+
+            let (logic_audio_sender, logic_audio_receiver) = channel(255);
+            let (audio_logic_sender, audio_logic_receiver) = channel(255);
+
+            *au.lock().unwrap() = Some(tokio::spawn(async {
+                let audio = Audio::new(logic_audio_sender, audio_logic_receiver);
+                audio.run().await;
+            }));
+
+            drop(au);
 
             *lo.lock().unwrap() = Some(tokio::spawn(async {
                 let state: TheManState = state.into();
-                let logic = TheManLogic::new(state, gui_sender, gui_reciver, egui_ctx);
+                let logic = TheManLogic::new(
+                    state,
+                    gui_logic_sender,
+                    logic_gui_receiver,
+                    egui_ctx,
+                    audio_logic_sender,
+                    logic_audio_receiver,
+                );
                 logic.run().await;
             }));
 
             drop(lo);
 
-            let app = TheMan::new(logic_reciver, logic_sender);
+            let app = TheMan::new(gui_logic_receiver, logic_gui_sender);
             Box::new(app)
         }),
     )
     .unwrap();
 
+    let audio = Arc::try_unwrap(audio).unwrap().into_inner().unwrap();
+    if let Some(audio) = audio {
+        audio.await.unwrap()
+    }
     let logic = Arc::try_unwrap(logic).unwrap().into_inner().unwrap();
     if let Some(logic) = logic {
         logic.await.unwrap()

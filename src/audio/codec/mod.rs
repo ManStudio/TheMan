@@ -2,7 +2,7 @@ use the_man::Atom;
 
 pub mod opus;
 
-pub trait Codec {
+pub trait Codec: Sync + Send {
     fn name(&self) -> &str;
 
     fn settings(&self) -> Vec<String>;
@@ -11,8 +11,8 @@ pub trait Codec {
 
     fn errors(&mut self) -> Vec<String>;
 
-    fn encode(&mut self, data: Vec<u8>) -> Vec<u8>;
-    fn decode(&mut self, data: Vec<u8>) -> Vec<u8>;
+    fn encode(&self, data: Vec<f32>) -> Vec<u8>;
+    fn decode(&self, data: &mut dyn Iterator<Item = u8>) -> Vec<f32>;
 
     fn c(&self) -> Box<dyn Codec>;
 }

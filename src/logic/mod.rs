@@ -6,6 +6,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use self::message::Message;
 
+pub mod audio;
 pub mod message;
 pub mod network;
 
@@ -13,6 +14,8 @@ pub struct TheManLogic {
     pub state: TheManState,
     pub sender: Sender<Message>,
     pub reciver: Receiver<Message>,
+    pub audio_sender: Sender<Message>,
+    pub audio_receiver: Receiver<Message>,
     pub bootstrap: Option<libp2p::kad::QueryId>,
     pub subscribed: Vec<TopicHash>,
     pub registration_query: Option<(libp2p::kad::QueryId, Instant)>,
@@ -26,6 +29,8 @@ impl TheManLogic {
         sender: Sender<Message>,
         reciver: Receiver<Message>,
         egui_ctx: eframe::egui::Context,
+        audio_sender: Sender<Message>,
+        audio_receiver: Receiver<Message>,
     ) -> Self {
         Self {
             state,
@@ -36,24 +41,48 @@ impl TheManLogic {
             registration_query: None,
             egui_ctx,
             registration_step_1_query: None,
+            audio_sender,
+            audio_receiver,
         }
     }
 
     pub async fn run(mut self) {
         let _ = self
             .sender
-            .try_send(Message::Accounts(self.state.accounts.clone()));
+            .send(Message::Accounts(self.state.accounts.clone()))
+            .await;
 
+        let _ = self
+            .audio_sender
+            .send(Message::Audio(message::AudioMessage::CreateInputChannel {
+                id: 0,
+                codec: "opus".into(),
+            }))
+            .await;
+
+        let _ = self
+            .audio_sender
+            .send(Message::Audio(message::AudioMessage::CreateOutputChannel {
+                id: 1,
+                codec: "opus".into(),
+            }))
+            .await;
         loop {
             if let Some(account) = &mut self.state.account {
                 let renew_account = tokio::time::Instant::from_std(account.expires);
                 tokio::select! {
                     Some(message) = self.reciver.recv() => {
-                        if let Message::ShutDown = &message {break}else{
+                        if let Message::ShutDown = &message {
+                            let _ = self.audio_sender.send(Message::ShutDown).await;
+                            break
+                        }else{
                             self.on_message(message).await;
                         }
 
                     },
+                    Some(message) = self.audio_receiver.recv() => {
+                        self.on_audio_message(message).await;
+                    }
                     event = account.swarm.select_next_some() => {
                         self.on_event(event).await;
                     }
@@ -71,9 +100,15 @@ impl TheManLogic {
             } else {
                 tokio::select! {
                     Some(message) = self.reciver.recv() => {
-                        if let Message::ShutDown = &message {break}else{
+                        if let Message::ShutDown = &message {
+                            let _ = self.audio_sender.send(Message::ShutDown).await;
+                            break
+                        }else{
                             self.on_message(message).await;
                         }
+                    }
+                    Some(message) = self.audio_receiver.recv() => {
+                        self.on_audio_message(message).await;
                     }
                 }
             }

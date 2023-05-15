@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use bytes_kman::TBytes;
 use the_man::Atom;
 
 use super::Codec;
@@ -39,12 +40,12 @@ impl Codec for CodecOpus {
         self.errors.drain(..).collect::<Vec<String>>()
     }
 
-    fn encode(&mut self, data: Vec<u8>) -> Vec<u8> {
-        data
+    fn encode(&self, data: Vec<f32>) -> Vec<u8> {
+        data.to_bytes()
     }
 
-    fn decode(&mut self, data: Vec<u8>) -> Vec<u8> {
-        data
+    fn decode(&self, data: &mut dyn Iterator<Item = u8>) -> Vec<f32> {
+        Vec::<f32>::from_bytes(data).unwrap_or_default()
     }
 
     fn c(&self) -> Box<dyn Codec> {
