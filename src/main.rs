@@ -76,7 +76,7 @@ async fn main() {
             transparent: false,
             mouse_passthrough: false,
             vsync: true,
-            multisampling: 0,
+            multisampling: 8,
             depth_buffer: 0,
             stencil_buffer: 0,
             hardware_acceleration: eframe::HardwareAcceleration::Preferred,
