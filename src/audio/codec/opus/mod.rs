@@ -167,7 +167,7 @@ impl Codec for CodecOpus {
                         opus::Channels::Mono => 1,
                         opus::Channels::Stereo => 2,
                     }
-                    * 20
+                    * 20 // ms
                     / 1000));
         let data = data.drain(..to_remove).collect::<Vec<f32>>();
         match self.encoder.encode_float(&data, &mut self.output_buffer) {

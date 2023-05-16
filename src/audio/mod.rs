@@ -55,7 +55,7 @@ impl Device {
 }
 
 pub struct Stream {
-    pub codec: Box<dyn Codec>,
+    pub codec: Option<Box<dyn Codec>>,
     pub stream: Option<cpal::Stream>,
     pub volume: f32,
     pub stream_type: StreamType,
@@ -123,10 +123,12 @@ impl Audio {
                 }
                 _ = tokio::time::sleep_until(read_errors) => {
                     for stream in self.streams.iter(){
-                        let errors = stream.write().unwrap().codec.errors();
                         let id = stream.read().unwrap().id;
-                        for error in errors{
-                            println!("Error for: {id}, {error}");
+                        if let Some(codec) = &mut stream.write().unwrap().codec{
+                            let errors = codec.errors();
+                            for error in errors{
+                                println!("Error for: {id}, {error}");
+                            }
                         }
                     }
 
@@ -173,7 +175,7 @@ impl Audio {
                             codec.set_setting("sample_rate".into(), sample_rate);
                         }
                         let stream = Arc::new(RwLock::new(Stream {
-                            codec,
+                            codec: Some(codec),
                             stream: None,
                             volume: 1.0,
                             stream_type: StreamType::Input,
@@ -188,7 +190,7 @@ impl Audio {
                             .build_input_stream(
                                 move |input: &[f32], _| {
                                     let volume = str.read().unwrap().volume;
-                                    let mut codec = str.read().unwrap().codec.c();
+                                    let mut codec = str.write().unwrap().codec.take().unwrap();
                                     str.write().unwrap().input_buffer.append(
                                         &mut input.iter().map(|d| d * volume).collect::<Vec<f32>>(),
                                     );
@@ -196,7 +198,7 @@ impl Audio {
                                     let _ = str.read().unwrap().sender.try_send(Message::Audio(
                                         AudioMessage::InputData { id, data },
                                     ));
-                                    str.write().unwrap().codec = codec;
+                                    str.write().unwrap().codec = Some(codec);
                                 },
                                 |_| panic!("Input stream error!"),
                                 None,
@@ -238,7 +240,7 @@ impl Audio {
                             codec.set_setting("sample_rate".into(), sample_rate);
                         }
                         let stream = Arc::new(RwLock::new(Stream {
-                            codec,
+                            codec: Some(codec),
                             stream: None,
                             volume: 1.0,
                             stream_type: StreamType::Output,
@@ -253,7 +255,7 @@ impl Audio {
                             .build_output_stream(
                                 move |output: &mut [f32], _| {
                                     let volume = str.read().unwrap().volume;
-                                    let mut codec = str.read().unwrap().codec.c();
+                                    let mut codec = str.write().unwrap().codec.take().unwrap();
                                     let mut buffer = {
                                         let mut stre = str.write().unwrap();
                                         let mut iter = stre.buffer.drain(..);
@@ -270,7 +272,7 @@ impl Audio {
                                     output.copy_from_slice(
                                         &buffer.drain(..).map(|e| e * volume).collect::<Vec<f32>>(),
                                     );
-                                    str.write().unwrap().codec = codec;
+                                    str.write().unwrap().codec = Some(codec);
                                 },
                                 |_| panic!("Output stream error!"),
                                 None,
