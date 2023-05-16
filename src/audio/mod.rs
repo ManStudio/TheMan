@@ -107,6 +107,8 @@ impl Audio {
 
         println!("Audio thread started!");
 
+        let mut read_errors = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+
         loop {
             tokio::select! {
                 Some(event) = self.logic_receiver.recv() => {
@@ -116,6 +118,17 @@ impl Audio {
                     }else{
                         self.process_logic(event).await;
                     }
+                }
+                _ = tokio::time::sleep_until(read_errors) => {
+                    for stream in self.streams.iter(){
+                        let errors = stream.write().unwrap().codec.errors();
+                        let id = stream.read().unwrap().id;
+                        for error in errors{
+                            println!("Error for: {id}, {error}");
+                        }
+                    }
+
+                    read_errors = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
                 }
 
             }
@@ -171,17 +184,11 @@ impl Audio {
                             .build_input_stream(
                                 move |input: &[f32], _| {
                                     let volume = str.read().unwrap().volume;
-                                    let mut codec = str.read().unwrap().codec.c();
+                                    let data = str.write().unwrap().codec.encode(
+                                        input.iter().map(|d| d * volume).collect::<Vec<f32>>(),
+                                    );
                                     let _ = str.read().unwrap().sender.try_send(Message::Audio(
-                                        AudioMessage::InputData {
-                                            id,
-                                            data: codec.encode(
-                                                input
-                                                    .iter()
-                                                    .map(|d| d * volume)
-                                                    .collect::<Vec<f32>>(),
-                                            ),
-                                        },
+                                        AudioMessage::InputData { id, data },
                                     ));
                                 },
                                 |_| panic!("Input stream error!"),
@@ -247,6 +254,7 @@ impl Audio {
                                     output.copy_from_slice(
                                         &buffer.drain(..).map(|e| e * volume).collect::<Vec<f32>>(),
                                     );
+                                    str.write().unwrap().codec = codec;
                                 },
                                 |_| panic!("Output stream error!"),
                                 None,
