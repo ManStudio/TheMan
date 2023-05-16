@@ -18,7 +18,8 @@ mod codec;
 
 pub struct Device {
     pub device: cpal::Device,
-    pub config: cpal::SupportedStreamConfig,
+    pub supported_config: cpal::SupportedStreamConfig,
+    pub config: cpal::StreamConfig,
 }
 
 impl Device {
@@ -33,12 +34,8 @@ impl Device {
         D: FnMut(&[T], &InputCallbackInfo) + Send + 'static,
         E: FnMut(StreamError) + Send + 'static,
     {
-        self.device.build_input_stream(
-            &self.config.clone().into(),
-            data_callback,
-            error_callback,
-            timeout,
-        )
+        self.device
+            .build_input_stream(&self.config, data_callback, error_callback, timeout)
     }
 
     pub fn build_output_stream<T, D, E>(
@@ -52,12 +49,8 @@ impl Device {
         D: FnMut(&mut [T], &OutputCallbackInfo) + Send + 'static,
         E: FnMut(StreamError) + Send + 'static,
     {
-        self.device.build_output_stream(
-            &self.config.clone().into(),
-            data_callback,
-            error_callback,
-            timeout,
-        )
+        self.device
+            .build_output_stream(&self.config, data_callback, error_callback, timeout)
     }
 }
 
@@ -152,7 +145,7 @@ impl Audio {
                                 .get_setting("channels".into())
                                 .expect("Doze not have channels");
                             if let Atom::UnSigned { value, .. } = &mut channels {
-                                *value = input_device.config.channels() as usize;
+                                *value = input_device.config.channels as usize;
                             }
                             codec.set_setting("channels".into(), channels);
 
@@ -160,7 +153,7 @@ impl Audio {
                                 .get_setting("sample_rate".into())
                                 .expect("Doze not have sample_rate");
                             if let Atom::UnSigned { value, .. } = &mut sample_rate {
-                                *value = input_device.config.sample_rate().0 as usize;
+                                *value = input_device.config.sample_rate.0 as usize;
                             }
                             codec.set_setting("sample_rate".into(), sample_rate);
                         }
@@ -218,7 +211,7 @@ impl Audio {
                                 .get_setting("channels".into())
                                 .expect("Doze not have channels");
                             if let Atom::UnSigned { value, .. } = &mut channels {
-                                *value = output_device.config.channels() as usize;
+                                *value = output_device.config.channels as usize;
                             }
                             codec.set_setting("channels".into(), channels);
 
@@ -226,7 +219,7 @@ impl Audio {
                                 .get_setting("sample_rate".into())
                                 .expect("Doze not have sample_rate");
                             if let Atom::UnSigned { value, .. } = &mut sample_rate {
-                                *value = output_device.config.sample_rate().0 as usize;
+                                *value = output_device.config.sample_rate.0 as usize;
                             }
                             codec.set_setting("sample_rate".into(), sample_rate);
                         }
@@ -294,7 +287,15 @@ impl Audio {
                         .map(|config| (device, config))
                         .ok()
                 })
-                .map(|(device, config)| Device { device, config });
+                .map(|(device, config)| Device {
+                    device,
+                    config: cpal::StreamConfig {
+                        channels: config.channels(),
+                        sample_rate: cpal::SampleRate(48000),
+                        buffer_size: config.config().buffer_size,
+                    },
+                    supported_config: config,
+                });
             self.input_device = host
                 .default_input_device()
                 .and_then(|device| {
@@ -303,7 +304,15 @@ impl Audio {
                         .map(|config| (device, config))
                         .ok()
                 })
-                .map(|(device, config)| Device { device, config });
+                .map(|(device, config)| Device {
+                    device,
+                    config: cpal::StreamConfig {
+                        channels: config.channels(),
+                        sample_rate: cpal::SampleRate(48000),
+                        buffer_size: config.config().buffer_size,
+                    },
+                    supported_config: config,
+                });
         }
     }
 }

@@ -19,10 +19,6 @@ pub struct CodecOpus {
 
 impl Clone for CodecOpus {
     fn clone(&self) -> Self {
-        println!(
-            "Sample rate: {}, channels: {:?}",
-            self.sample_rate, self.channels
-        );
         Self {
             errors: self.errors.clone(),
             decoder: Decoder::new(self.sample_rate, self.channels).unwrap(),
