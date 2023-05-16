@@ -5,7 +5,6 @@ use std::{
 };
 
 use crate::{logic::message::AudioMessage, Message};
-use bytes_kman::TBytes;
 use cpal::{
     traits::{DeviceTrait, HostTrait},
     InputCallbackInfo, OutputCallbackInfo, SizedSample, StreamError,
@@ -24,7 +23,7 @@ pub struct Device {
 impl Device {
     pub fn build_input_stream<T, D, E>(
         &mut self,
-        mut data_callback: D,
+        data_callback: D,
         error_callback: E,
         timeout: Option<Duration>,
     ) -> Result<cpal::Stream, cpal::BuildStreamError>
@@ -43,7 +42,7 @@ impl Device {
 
     pub fn build_output_stream<T, D, E>(
         &mut self,
-        mut data_callback: D,
+        data_callback: D,
         error_callback: E,
         timeout: Option<Duration>,
     ) -> Result<cpal::Stream, cpal::BuildStreamError>
@@ -109,7 +108,7 @@ impl Audio {
         self.try_get_default_devices();
 
         self.codecs
-            .insert("opus".into(), Box::new(CodecOpus::default()));
+            .insert("opus".into(), Box::<CodecOpus>::default());
 
         println!("Audio thread started!");
 
@@ -145,7 +144,7 @@ impl Audio {
                 let mut error = String::new();
                 if let Some(input_device) = &mut self.input_device {
                     if let Some(codec) = self.codecs.get(&codec) {
-                        let mut stream = Arc::new(RwLock::new(Stream {
+                        let stream = Arc::new(RwLock::new(Stream {
                             codec: codec.c(),
                             stream: None,
                             volume: 1.0,
@@ -183,16 +182,15 @@ impl Audio {
                 } else {
                     error.push_str("No input device!\n");
                 }
-                self.logic_sender
-                    .try_send(Message::Audio(AudioMessage::ResCreateInputChannel(
-                        id, error,
-                    )));
+                let _ = self.logic_sender.try_send(Message::Audio(
+                    AudioMessage::ResCreateInputChannel(id, error),
+                ));
             }
             Message::Audio(AudioMessage::CreateOutputChannel { id, codec }) => {
                 let mut error = String::new();
                 if let Some(output_device) = &mut self.output_device {
                     if let Some(codec) = self.codecs.get(&codec) {
-                        let mut stream = Arc::new(RwLock::new(Stream {
+                        let stream = Arc::new(RwLock::new(Stream {
                             codec: codec.c(),
                             stream: None,
                             volume: 1.0,
@@ -229,10 +227,9 @@ impl Audio {
                 } else {
                     error.push_str("No output device!\n");
                 }
-                self.logic_sender
-                    .try_send(Message::Audio(AudioMessage::ResCreateOutputChannel(
-                        id, error,
-                    )));
+                let _ = self.logic_sender.try_send(Message::Audio(
+                    AudioMessage::ResCreateOutputChannel(id, error),
+                ));
             }
             Message::Audio(AudioMessage::OutputData { id, mut data }) => {
                 if let Some(stream) = self.streams.get(id) {
