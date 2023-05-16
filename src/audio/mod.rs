@@ -6,9 +6,10 @@ use std::{
 
 use crate::{logic::message::AudioMessage, Message};
 use cpal::{
-    traits::{DeviceTrait, HostTrait},
+    traits::{DeviceTrait, HostTrait, StreamTrait},
     InputCallbackInfo, OutputCallbackInfo, SizedSample, StreamError,
 };
+use the_man::Atom;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use self::codec::{opus::CodecOpus, Codec};
@@ -105,6 +106,7 @@ impl Audio {
     }
     pub async fn run(mut self) {
         self.host = Some(cpal::default_host());
+
         self.try_get_default_devices();
 
         self.codecs
@@ -144,8 +146,26 @@ impl Audio {
                 let mut error = String::new();
                 if let Some(input_device) = &mut self.input_device {
                     if let Some(codec) = self.codecs.get(&codec) {
+                        let mut codec = codec.c();
+                        {
+                            let mut channels = codec
+                                .get_setting("channels".into())
+                                .expect("Doze not have channels");
+                            if let Atom::UnSigned { value, .. } = &mut channels {
+                                *value = input_device.config.channels() as usize;
+                            }
+                            codec.set_setting("channels".into(), channels);
+
+                            let mut sample_rate = codec
+                                .get_setting("sample_rate".into())
+                                .expect("Doze not have sample_rate");
+                            if let Atom::UnSigned { value, .. } = &mut sample_rate {
+                                *value = input_device.config.sample_rate().0 as usize;
+                            }
+                            codec.set_setting("sample_rate".into(), sample_rate);
+                        }
                         let stream = Arc::new(RwLock::new(Stream {
-                            codec: codec.c(),
+                            codec,
                             stream: None,
                             volume: 1.0,
                             stream_type: StreamType::Input,
@@ -158,10 +178,11 @@ impl Audio {
                             .build_input_stream(
                                 move |input: &[f32], _| {
                                     let volume = str.read().unwrap().volume;
+                                    let mut codec = str.read().unwrap().codec.c();
                                     let _ = str.read().unwrap().sender.try_send(Message::Audio(
                                         AudioMessage::InputData {
                                             id,
-                                            data: str.read().unwrap().codec.encode(
+                                            data: codec.encode(
                                                 input
                                                     .iter()
                                                     .map(|d| d * volume)
@@ -174,6 +195,7 @@ impl Audio {
                                 None,
                             )
                             .unwrap();
+                        cpal_stream.play();
                         stream.write().unwrap().stream = Some(cpal_stream);
                         self.streams.push(stream);
                     } else {
@@ -190,8 +212,26 @@ impl Audio {
                 let mut error = String::new();
                 if let Some(output_device) = &mut self.output_device {
                     if let Some(codec) = self.codecs.get(&codec) {
+                        let mut codec = codec.c();
+                        {
+                            let mut channels = codec
+                                .get_setting("channels".into())
+                                .expect("Doze not have channels");
+                            if let Atom::UnSigned { value, .. } = &mut channels {
+                                *value = output_device.config.channels() as usize;
+                            }
+                            codec.set_setting("channels".into(), channels);
+
+                            let mut sample_rate = codec
+                                .get_setting("sample_rate".into())
+                                .expect("Doze not have sample_rate");
+                            if let Atom::UnSigned { value, .. } = &mut sample_rate {
+                                *value = output_device.config.sample_rate().0 as usize;
+                            }
+                            codec.set_setting("sample_rate".into(), sample_rate);
+                        }
                         let stream = Arc::new(RwLock::new(Stream {
-                            codec: codec.c(),
+                            codec,
                             stream: None,
                             volume: 1.0,
                             stream_type: StreamType::Output,
@@ -204,7 +244,7 @@ impl Audio {
                             .build_output_stream(
                                 move |output: &mut [f32], _| {
                                     let volume = str.read().unwrap().volume;
-                                    let codec = str.read().unwrap().codec.c();
+                                    let mut codec = str.read().unwrap().codec.c();
                                     let mut buffer = {
                                         let mut stre = str.write().unwrap();
                                         let mut iter = stre.buffer.drain(..);
@@ -219,6 +259,8 @@ impl Audio {
                                 None,
                             )
                             .unwrap();
+
+                        cpal_stream.play();
                         stream.write().unwrap().stream = Some(cpal_stream);
                         self.streams.push(stream);
                     } else {
