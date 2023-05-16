@@ -158,7 +158,18 @@ impl Codec for CodecOpus {
         self.errors.drain(..).collect::<Vec<String>>()
     }
 
-    fn encode(&mut self, data: Vec<f32>) -> Vec<u8> {
+    fn encode(&mut self, data: &mut Vec<f32>) -> Vec<u8> {
+        let size = data.len();
+        let to_remove = size
+            - (size
+                % (self.sample_rate as usize
+                    * match self.channels {
+                        opus::Channels::Mono => 1,
+                        opus::Channels::Stereo => 2,
+                    }
+                    * 20
+                    / 1000));
+        let data = data.drain(..to_remove).collect::<Vec<f32>>();
         match self.encoder.encode_float(&data, &mut self.output_buffer) {
             Ok(len) => return self.output_buffer[0..len].to_vec().to_bytes(),
             Err(err) => {
@@ -171,9 +182,10 @@ impl Codec for CodecOpus {
 
     fn decode(&mut self, data: &mut dyn Iterator<Item = u8>) -> Vec<f32> {
         let data = Vec::<u8>::from_bytes(data).unwrap_or_default();
+        println!("Data: {}", data.len());
         match self
             .decoder
-            .decode_float(&data, &mut self.input_buffer, true)
+            .decode_float(&data, &mut self.input_buffer, false)
         {
             Ok(len) => return self.input_buffer[0..len].to_vec(),
             Err(err) => {
@@ -188,4 +200,50 @@ impl Codec for CodecOpus {
         // Box::<Self>::default()
         Box::new(self.clone())
     }
+}
+
+#[test]
+fn opus() {
+    let input_buffer: Vec<f32> = vec![0.0; 1920 * 2]; // Add more samples as needed
+
+    // Opus encoder parameters
+    let sample_rate = 48000;
+
+    // Calculate the number of frames in the buffer
+
+    // Create an Opus encoder with the specified parameters
+    let mut encoder = Encoder::new(
+        sample_rate,
+        opus::Channels::Stereo,
+        opus::Application::Audio,
+    )
+    .unwrap();
+
+    // Calculate the maximum size of the output buffer
+    let max_output_len = 4000; // Adjust the size as needed
+
+    // Create an output buffer to store the encoded Opus data
+    let mut output_buffer = vec![0u8; max_output_len];
+
+    // Encode the input audio buffer
+    let encoded_len = encoder
+        .encode_float(&input_buffer, &mut output_buffer)
+        .unwrap();
+
+    // Print the length of the encoded Opus data
+    println!("Encoded length: {}", encoded_len);
+}
+
+#[test]
+fn tt() {
+    let mut buffer = vec![0.0; 6000];
+    let multiple = 920;
+
+    let current_size = buffer.len();
+    let elements_to_extract = current_size - (current_size % multiple);
+    panic!("ele: {}", elements_to_extract);
+
+    let extracted_slice = buffer.split_off(elements_to_extract);
+
+    panic!("Drained slice size: {}", extracted_slice.len());
 }

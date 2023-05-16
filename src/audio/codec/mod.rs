@@ -11,7 +11,7 @@ pub trait Codec: Sync + Send {
 
     fn errors(&mut self) -> Vec<String>;
 
-    fn encode(&mut self, data: Vec<f32>) -> Vec<u8>;
+    fn encode(&mut self, data: &mut Vec<f32>) -> Vec<u8>;
     fn decode(&mut self, data: &mut dyn Iterator<Item = u8>) -> Vec<f32>;
 
     fn c(&self) -> Box<dyn Codec>;

@@ -61,6 +61,8 @@ pub struct Stream {
     pub stream_type: StreamType,
     pub id: usize,
     pub buffer: Vec<u8>,
+    pub input_buffer: Vec<f32>,
+    pub output_buffer: Vec<f32>,
     pub sender: Sender<Message>,
 }
 
@@ -178,18 +180,23 @@ impl Audio {
                             id,
                             buffer: Vec::new(),
                             sender: self.logic_sender.clone(),
+                            input_buffer: Vec::new(),
+                            output_buffer: Vec::new(),
                         }));
                         let str = stream.clone();
                         let cpal_stream = input_device
                             .build_input_stream(
                                 move |input: &[f32], _| {
                                     let volume = str.read().unwrap().volume;
-                                    let data = str.write().unwrap().codec.encode(
-                                        input.iter().map(|d| d * volume).collect::<Vec<f32>>(),
+                                    let mut codec = str.read().unwrap().codec.c();
+                                    str.write().unwrap().input_buffer.append(
+                                        &mut input.iter().map(|d| d * volume).collect::<Vec<f32>>(),
                                     );
+                                    let data = codec.encode(&mut str.write().unwrap().input_buffer);
                                     let _ = str.read().unwrap().sender.try_send(Message::Audio(
                                         AudioMessage::InputData { id, data },
                                     ));
+                                    str.write().unwrap().codec = codec;
                                 },
                                 |_| panic!("Input stream error!"),
                                 None,
@@ -238,6 +245,8 @@ impl Audio {
                             id,
                             buffer: Vec::new(),
                             sender: self.logic_sender.clone(),
+                            input_buffer: Vec::new(),
+                            output_buffer: Vec::new(),
                         }));
                         let str = stream.clone();
                         let cpal_stream = output_device
@@ -250,6 +259,13 @@ impl Audio {
                                         let mut iter = stre.buffer.drain(..);
                                         codec.decode(&mut iter)
                                     };
+                                    str.write().unwrap().output_buffer.append(&mut buffer);
+                                    let mut buffer = str
+                                        .write()
+                                        .unwrap()
+                                        .output_buffer
+                                        .drain(..output.len())
+                                        .collect::<Vec<f32>>();
                                     buffer.resize(output.len(), 0.0);
                                     output.copy_from_slice(
                                         &buffer.drain(..).map(|e| e * volume).collect::<Vec<f32>>(),
