@@ -15,19 +15,26 @@ pub struct CodecOpus {
     pub sample_rate: u32,
     pub input_buffer: Vec<f32>,
     pub output_buffer: Vec<u8>,
+    pub bitrate: i32,
 }
 
 impl Clone for CodecOpus {
     fn clone(&self) -> Self {
+        let mut decoder = Decoder::new(self.sample_rate, self.channels).unwrap();
+        let mut encoder = Encoder::new(self.sample_rate, self.channels, self.application).unwrap();
+        encoder
+            .set_bitrate(opus::Bitrate::Bits(self.bitrate))
+            .unwrap();
         Self {
             errors: self.errors.clone(),
-            decoder: Decoder::new(self.sample_rate, self.channels).unwrap(),
-            encoder: Encoder::new(self.sample_rate, self.channels, self.application).unwrap(),
+            decoder,
+            encoder,
             channels: self.channels,
             application: self.application,
             sample_rate: self.sample_rate,
             input_buffer: self.input_buffer.clone(),
             output_buffer: self.output_buffer.clone(),
+            bitrate: self.bitrate,
         }
     }
 }
@@ -42,11 +49,12 @@ impl Default for CodecOpus {
             errors: Vec::new(),
             decoder: Decoder::new(8000, opus::Channels::Stereo).unwrap(),
             encoder: Encoder::new(8000, opus::Channels::Stereo, opus::Application::Voip).unwrap(),
-            channels: opus::Channels::Stereo,
+            channels: opus::Channels::Mono,
             application: opus::Application::Voip,
             sample_rate: 8000,
             input_buffer: Vec::new(),
             output_buffer: Vec::new(),
+            bitrate: 128000,
         };
 
         s.setup_buffers();
@@ -114,7 +122,10 @@ impl Codec for CodecOpus {
                         Err(err) => self.errors.push(format!("OpusDecoder: Error: {err}")),
                     }
                     match new_encoder {
-                        Ok(encoder) => self.encoder = encoder,
+                        Ok(mut encoder) => {
+                            encoder.set_bitrate(opus::Bitrate::Bits(self.bitrate));
+                            self.encoder = encoder
+                        }
                         Err(err) => self.errors.push(format!("OpusEncoder: Error: {err}")),
                     }
 
@@ -132,15 +143,17 @@ impl Codec for CodecOpus {
                         }
                     };
                     let new_decoder = Decoder::new(self.sample_rate, channels);
-                    let new_encoder =
-                        Encoder::new(self.sample_rate, channels.clone(), self.application);
+                    let new_encoder = Encoder::new(self.sample_rate, channels, self.application);
 
                     match new_decoder {
                         Ok(decoder) => self.decoder = decoder,
                         Err(err) => self.errors.push(format!("OpusDecoder: Error: {err}")),
                     }
                     match new_encoder {
-                        Ok(encoder) => self.encoder = encoder,
+                        Ok(mut encoder) => {
+                            encoder.set_bitrate(opus::Bitrate::Bits(self.bitrate));
+                            self.encoder = encoder
+                        }
                         Err(err) => self.errors.push(format!("OpusEncoder: Error: {err}")),
                     }
 
@@ -165,7 +178,7 @@ impl Codec for CodecOpus {
                         opus::Channels::Mono => 1,
                         opus::Channels::Stereo => 2,
                     }
-                    * 20 // ms
+                    * 100 // ms
                     / 1000);
         let mut size;
         let mut to_remove;
