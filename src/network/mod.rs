@@ -19,14 +19,30 @@ impl NetworkBehaviour for TheManBehaviour {
 
     type OutEvent = event::BehaviourEvent;
 
-    fn on_swarm_event(&mut self, event: libp2p::swarm::FromSwarm<Self::ConnectionHandler>) {}
+    fn on_swarm_event(&mut self, event: libp2p::swarm::FromSwarm<Self::ConnectionHandler>) {
+        match event {
+            libp2p::swarm::FromSwarm::ConnectionEstablished(event) => {}
+            libp2p::swarm::FromSwarm::ConnectionClosed(_) => {}
+            libp2p::swarm::FromSwarm::AddressChange(_) => {}
+            libp2p::swarm::FromSwarm::DialFailure(_) => {}
+            libp2p::swarm::FromSwarm::ListenFailure(_) => {}
+            libp2p::swarm::FromSwarm::NewListener(_) => {}
+            libp2p::swarm::FromSwarm::NewListenAddr(_) => {}
+            libp2p::swarm::FromSwarm::ExpiredListenAddr(_) => {}
+            libp2p::swarm::FromSwarm::ListenerError(_) => {}
+            libp2p::swarm::FromSwarm::ListenerClosed(_) => {}
+            libp2p::swarm::FromSwarm::NewExternalAddr(_) => {}
+            libp2p::swarm::FromSwarm::ExpiredExternalAddr(_) => {}
+        }
+    }
 
     fn on_connection_handler_event(
         &mut self,
-        _peer_id: libp2p::PeerId,
-        _connection_id: libp2p::swarm::ConnectionId,
-        _event: libp2p::swarm::THandlerOutEvent<Self>,
+        peer_id: libp2p::PeerId,
+        connection_id: libp2p::swarm::ConnectionId,
+        event: libp2p::swarm::THandlerOutEvent<Self>,
     ) {
+        println!("SWEV: PeerId: {peer_id}, event: {event:?}");
     }
 
     fn poll(
@@ -35,6 +51,7 @@ impl NetworkBehaviour for TheManBehaviour {
         params: &mut impl libp2p::swarm::PollParameters,
     ) -> std::task::Poll<libp2p::swarm::ToSwarm<Self::OutEvent, libp2p::swarm::THandlerInEvent<Self>>>
     {
+        std::task::Poll::Pending
         // println!(
         //     "sup: {:?}",
         //     params
@@ -42,7 +59,6 @@ impl NetworkBehaviour for TheManBehaviour {
         //         .flat_map(|d| String::from_utf8(d))
         //         .collect::<Vec<String>>()
         // );
-        std::task::Poll::Pending
     }
 
     fn handle_established_inbound_connection(
@@ -74,12 +90,14 @@ impl NetworkBehaviour for TheManBehaviour {
     }
 }
 
-pub struct Connection {}
+pub struct Connection {
+    init: bool,
+}
 
 impl Connection {
     pub fn new() -> Result<libp2p::swarm::THandler<TheManBehaviour>, libp2p::swarm::ConnectionDenied>
     {
-        Ok(Self {})
+        Ok(Self { init: false })
     }
 }
 
@@ -117,14 +135,14 @@ impl ConnectionHandler for Connection {
 
     type OutboundProtocol = ReadyUpgrade<&'static str>;
 
-    type InboundOpenInfo = ();
+    type InboundOpenInfo = String;
 
-    type OutboundOpenInfo = ();
+    type OutboundOpenInfo = String;
 
     fn listen_protocol(
         &self,
     ) -> libp2p::swarm::SubstreamProtocol<Self::InboundProtocol, Self::InboundOpenInfo> {
-        SubstreamProtocol::new(ReadyUpgrade::new("the-man"), ())
+        SubstreamProtocol::new(ReadyUpgrade::new("/the-man/1.0.0"), "Test".into())
     }
 
     fn connection_keep_alive(&self) -> libp2p::swarm::KeepAlive {
@@ -142,7 +160,20 @@ impl ConnectionHandler for Connection {
             Self::Error,
         >,
     > {
-        std::task::Poll::Pending
+        if !self.init {
+            self.init = true;
+
+            std::task::Poll::Ready(
+                libp2p::swarm::ConnectionHandlerEvent::OutboundSubstreamRequest {
+                    protocol: SubstreamProtocol::new(
+                        ReadyUpgrade::new("/the-man/1.0.0"),
+                        "Test".into(),
+                    ),
+                },
+            )
+        } else {
+            std::task::Poll::Pending
+        }
     }
 
     fn on_behaviour_event(&mut self, _event: Self::InEvent) {}
@@ -156,5 +187,14 @@ impl ConnectionHandler for Connection {
             Self::OutboundOpenInfo,
         >,
     ) {
+        match event {
+            libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedInbound(event) => {
+                println!("Inbound: {:?}", event.protocol);
+            }
+            libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedOutbound(event) => {
+                println!("Outbound: {:?}", event.protocol);
+            }
+            _ => {}
+        }
     }
 }
