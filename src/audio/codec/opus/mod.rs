@@ -159,41 +159,52 @@ impl Codec for CodecOpus {
     }
 
     fn encode(&mut self, data: &mut Vec<f32>) -> Vec<u8> {
-        let size = data.len();
-        let to_remove = size
-            - (size
-                % (self.sample_rate as usize
+        let mut buffer = Vec::new();
+        let chunk = (self.sample_rate as usize
                     * match self.channels {
                         opus::Channels::Mono => 1,
                         opus::Channels::Stereo => 2,
                     }
                     * 20 // ms
-                    / 1000));
-        let data = data.drain(..to_remove).collect::<Vec<f32>>();
-        match self.encoder.encode_float(&data, &mut self.output_buffer) {
-            Ok(len) => return self.output_buffer[0..len].to_vec().to_bytes(),
-            Err(err) => {
-                self.errors
-                    .push(format!("OpusEncoder encoding error: {err:?}"));
-                return Vec::new();
+                    / 1000);
+        let mut size;
+        let mut to_remove;
+        while {
+            size = data.len();
+            to_remove = size - (size % chunk);
+            to_remove >= chunk
+        } {
+            let data = data.drain(..to_remove).collect::<Vec<f32>>();
+            match self.encoder.encode_float(&data, &mut self.output_buffer) {
+                Ok(len) => buffer.append(&mut self.output_buffer[0..len].to_vec().to_bytes()),
+                Err(err) => {
+                    self.errors
+                        .push(format!("OpusEncoder encoding error: {err:?}"));
+                    return buffer;
+                }
             }
         }
+        buffer
     }
 
-    fn decode(&mut self, data: &mut dyn Iterator<Item = u8>) -> Vec<f32> {
-        let data = Vec::<u8>::from_bytes(data).unwrap_or_default();
-        println!("Data: {}", data.len());
-        match self
-            .decoder
-            .decode_float(&data, &mut self.input_buffer, false)
-        {
-            Ok(len) => return self.input_buffer[0..len].to_vec(),
-            Err(err) => {
-                self.errors
-                    .push(format!("OpusDecoder decoding error: {err:?}"));
-                return Vec::new();
+    fn decode(&mut self, data: &mut Vec<u8>) -> Vec<f32> {
+        let mut buffer = Vec::new();
+        while data.len() > 4 {
+            let data = Vec::<u8>::from_bytes(&mut data.drain(..)).unwrap();
+            println!("Data: {}", data.len());
+            match self
+                .decoder
+                .decode_float(&data, &mut self.input_buffer, false)
+            {
+                Ok(len) => buffer.append(&mut self.input_buffer[0..len].to_vec()),
+                Err(err) => {
+                    self.errors
+                        .push(format!("OpusDecoder decoding error: {err:?}"));
+                }
             }
         }
+
+        buffer
     }
 
     fn c(&self) -> Box<dyn Codec> {

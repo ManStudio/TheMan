@@ -258,15 +258,17 @@ impl Audio {
                                     let mut codec = str.write().unwrap().codec.take().unwrap();
                                     let mut buffer = {
                                         let mut stre = str.write().unwrap();
-                                        let mut iter = stre.buffer.drain(..);
-                                        codec.decode(&mut iter)
+                                        codec.decode(&mut stre.buffer)
                                     };
                                     str.write().unwrap().output_buffer.append(&mut buffer);
+                                    let len = str.read().unwrap().output_buffer.len();
+                                    let len = if len >= output.len() { output.len() } else { 0 };
+                                    println!("Len: {len}");
                                     let mut buffer = str
                                         .write()
                                         .unwrap()
                                         .output_buffer
-                                        .drain(..output.len())
+                                        .drain(..len)
                                         .collect::<Vec<f32>>();
                                     buffer.resize(output.len(), 0.0);
                                     output.copy_from_slice(
