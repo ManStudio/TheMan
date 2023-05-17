@@ -79,6 +79,7 @@ impl CodecOpus {
 
     fn setup(&mut self) {
         println!("Channels: {:?}", self.channels);
+
         self.encoder
             .set_bitrate(opus::Bitrate::Bits(self.bitrate))
             .unwrap();
@@ -223,7 +224,14 @@ impl Codec for CodecOpus {
                 .decoder
                 .decode_float(&data, &mut self.input_buffer, false)
             {
-                Ok(len) => buffer.append(&mut self.input_buffer[0..len].to_vec()),
+                Ok(len) => buffer.append(
+                    &mut self.input_buffer[0..len
+                        * match self.channels {
+                            opus::Channels::Mono => 1,
+                            opus::Channels::Stereo => 2,
+                        }]
+                        .to_vec(),
+                ),
                 Err(err) => {
                     self.errors
                         .push(format!("OpusDecoder decoding error: {err:?}"));
