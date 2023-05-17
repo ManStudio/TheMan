@@ -263,7 +263,6 @@ impl Audio {
                                     str.write().unwrap().output_buffer.append(&mut buffer);
                                     let len = str.read().unwrap().output_buffer.len();
                                     let len = if len >= output.len() { output.len() } else { 0 };
-                                    println!("Len: {len}");
                                     let mut buffer = str
                                         .write()
                                         .unwrap()

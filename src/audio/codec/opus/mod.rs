@@ -72,14 +72,11 @@ impl CodecOpus {
         };
 
         let len = self.sample_rate as usize * channels;
-        println!("Len: {}", len);
         self.input_buffer.resize(len, 0.0);
         self.output_buffer.resize(len, 0);
     }
 
     fn setup(&mut self) {
-        println!("Channels: {:?}", self.channels);
-
         self.encoder
             .set_bitrate(opus::Bitrate::Bits(self.bitrate))
             .unwrap();
@@ -179,7 +176,6 @@ impl Codec for CodecOpus {
     }
 
     fn encode(&mut self, data: &mut Vec<f32>) -> Vec<u8> {
-        println!("Input: {}", data.len());
         let mut buffer = Vec::new();
         let chunk = (self.sample_rate as usize
             * match self.channels {
@@ -196,10 +192,6 @@ impl Codec for CodecOpus {
             to_remove = size - (size % chunk);
             to_remove >= chunk
         } {
-            println!(
-                "Process: {to_remove}, Samplerate: {}, Channels: {:?}",
-                self.sample_rate, self.channels
-            );
             let data = data.drain(..to_remove).collect::<Vec<f32>>();
             match self.encoder.encode_float(&data, &mut self.output_buffer) {
                 Ok(len) => buffer.append(&mut self.output_buffer[0..len].to_vec().to_bytes()),
@@ -224,6 +216,7 @@ impl Codec for CodecOpus {
                 .decoder
                 .decode_float(&data, &mut self.input_buffer, false)
             {
+                // TODO: I don't know why this works!
                 Ok(len) => buffer.append(
                     &mut self.input_buffer[0..len
                         * match self.channels {
@@ -238,13 +231,6 @@ impl Codec for CodecOpus {
                 }
             }
         }
-
-        println!(
-            "Decoded: {}, SampleRate: {}, Channels: {:?}",
-            buffer.len(),
-            self.sample_rate,
-            self.channels
-        );
 
         buffer
     }
