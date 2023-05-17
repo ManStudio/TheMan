@@ -3,7 +3,10 @@ use libp2p::{
     swarm::{ConnectionHandler, NetworkBehaviour, SubstreamProtocol},
 };
 
+use self::handler::Connection;
+
 pub mod event;
+pub mod handler;
 pub mod packet;
 
 pub struct TheManBehaviour {}
@@ -90,17 +93,6 @@ impl NetworkBehaviour for TheManBehaviour {
     }
 }
 
-pub struct Connection {
-    init: bool,
-}
-
-impl Connection {
-    pub fn new() -> Result<libp2p::swarm::THandler<TheManBehaviour>, libp2p::swarm::ConnectionDenied>
-    {
-        Ok(Self { init: false })
-    }
-}
-
 #[derive(Debug)]
 pub enum Failure {
     Other {
@@ -120,81 +112,6 @@ impl std::error::Error for Failure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Failure::Other { error } => Some(&**error),
-        }
-    }
-}
-
-impl ConnectionHandler for Connection {
-    type InEvent = ();
-
-    type OutEvent = ();
-
-    type Error = Failure;
-
-    type InboundProtocol = ReadyUpgrade<&'static str>;
-
-    type OutboundProtocol = ReadyUpgrade<&'static str>;
-
-    type InboundOpenInfo = String;
-
-    type OutboundOpenInfo = String;
-
-    fn listen_protocol(
-        &self,
-    ) -> libp2p::swarm::SubstreamProtocol<Self::InboundProtocol, Self::InboundOpenInfo> {
-        SubstreamProtocol::new(ReadyUpgrade::new("/the-man/1.0.0"), "Test".into())
-    }
-
-    fn connection_keep_alive(&self) -> libp2p::swarm::KeepAlive {
-        libp2p::swarm::KeepAlive::Yes
-    }
-
-    fn poll(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<
-        libp2p::swarm::ConnectionHandlerEvent<
-            Self::OutboundProtocol,
-            Self::OutboundOpenInfo,
-            Self::OutEvent,
-            Self::Error,
-        >,
-    > {
-        if !self.init {
-            self.init = true;
-
-            std::task::Poll::Ready(
-                libp2p::swarm::ConnectionHandlerEvent::OutboundSubstreamRequest {
-                    protocol: SubstreamProtocol::new(
-                        ReadyUpgrade::new("/the-man/1.0.0"),
-                        "Test".into(),
-                    ),
-                },
-            )
-        } else {
-            std::task::Poll::Pending
-        }
-    }
-
-    fn on_behaviour_event(&mut self, _event: Self::InEvent) {}
-
-    fn on_connection_event(
-        &mut self,
-        event: libp2p::swarm::handler::ConnectionEvent<
-            Self::InboundProtocol,
-            Self::OutboundProtocol,
-            Self::InboundOpenInfo,
-            Self::OutboundOpenInfo,
-        >,
-    ) {
-        match event {
-            libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedInbound(event) => {
-                println!("Inbound: {:?}", event.protocol);
-            }
-            libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedOutbound(event) => {
-                println!("Outbound: {:?}", event.protocol);
-            }
-            _ => {}
         }
     }
 }
