@@ -1,3 +1,5 @@
+pub mod network;
+
 #[derive(Debug, Clone)]
 pub enum Atom {
     Signed {

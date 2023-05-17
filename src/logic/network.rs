@@ -187,6 +187,7 @@ impl TheManLogic {
                         }
                         self.egui_ctx.request_repaint();
                     }
+                    BehaviourEvent::TheMan(event) => {}
                 }
             }
             libp2p::swarm::SwarmEvent::ConnectionEstablished { peer_id, .. } => {

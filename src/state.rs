@@ -142,6 +142,8 @@ impl TheManState {
 
         let ping = { libp2p::ping::Behaviour::new(libp2p::ping::Config::new()) };
 
+        let the_man = { the_man::network::TheManBehaviour::new() };
+
         let transport = libp2p::tokio_development_transport(keypair.clone()).unwrap();
         let swarm = SwarmBuilder::with_tokio_executor(
             transport,
@@ -153,6 +155,7 @@ impl TheManState {
                 autonat,
                 relay,
                 ping,
+                the_man,
             },
             peer_id,
         )
@@ -189,6 +192,7 @@ pub struct TheManBehaviour {
     pub autonat: libp2p::autonat::Behaviour,
     pub relay: libp2p::relay::Behaviour,
     pub ping: libp2p::ping::Behaviour,
+    pub the_man: the_man::network::TheManBehaviour,
 }
 
 #[derive(Debug)]
@@ -200,6 +204,7 @@ pub enum BehaviourEvent {
     AutoNat(libp2p::autonat::Event),
     Relay(libp2p::relay::Event),
     Ping(libp2p::ping::Event),
+    TheMan(the_man::network::event::BehaviourEvent),
 }
 
 impl From<KademliaEvent> for BehaviourEvent {
@@ -241,5 +246,11 @@ impl From<libp2p::relay::Event> for BehaviourEvent {
 impl From<libp2p::ping::Event> for BehaviourEvent {
     fn from(value: libp2p::ping::Event) -> Self {
         Self::Ping(value)
+    }
+}
+
+impl From<the_man::network::event::BehaviourEvent> for BehaviourEvent {
+    fn from(value: the_man::network::event::BehaviourEvent) -> Self {
+        Self::TheMan(value)
     }
 }
