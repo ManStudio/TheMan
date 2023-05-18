@@ -142,7 +142,9 @@ impl TheManState {
 
         let ping = { libp2p::ping::Behaviour::new(libp2p::ping::Config::new()) };
 
-        let the_man = { the_man::network::TheManBehaviour::new(peer_id) };
+        let mut the_man = { the_man::network::TheManBehaviour::new(peer_id) };
+
+        the_man.connect("voice".into());
 
         let transport = libp2p::tokio_development_transport(keypair.clone()).unwrap();
         let swarm = SwarmBuilder::with_tokio_executor(

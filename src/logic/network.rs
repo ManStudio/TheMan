@@ -187,7 +187,63 @@ impl TheManLogic {
                         }
                         self.egui_ctx.request_repaint();
                     }
-                    BehaviourEvent::TheMan(event) => {}
+                    BehaviourEvent::TheMan(event) => {
+                        if let Some(account) = &mut self.state.account {
+                            match event {
+                                the_man::network::event::BehaviourEvent::VoicePacket {
+                                    from,
+                                    codec,
+                                    data,
+                                    channel,
+                                } => {
+                                    let _ = self.audio_sender.try_send(Message::Audio(
+                                        super::message::AudioMessage::OutputData {
+                                            id: 1,
+                                            data: data,
+                                        },
+                                    ));
+                                }
+                                the_man::network::event::BehaviourEvent::Request {
+                                    channel,
+                                    from,
+                                } => {}
+                                the_man::network::event::BehaviourEvent::Disconnected {
+                                    channel,
+                                    from,
+                                } => {}
+                                the_man::network::event::BehaviourEvent::InVoice {
+                                    who,
+                                    codec,
+                                    chennel,
+                                } => {}
+                                the_man::network::event::BehaviourEvent::VoiceRequestConnect {
+                                    from,
+                                    codec,
+                                    channel,
+                                } => {}
+                                the_man::network::event::BehaviourEvent::VoiceAccept {
+                                    to,
+                                    codec,
+                                    channel,
+                                } => {}
+                                the_man::network::event::BehaviourEvent::VoiceConnectedTo {
+                                    to,
+                                    codec,
+                                    channel,
+                                } => {}
+                                the_man::network::event::BehaviourEvent::VoiceDisconnected {
+                                    from,
+                                    channel,
+                                } => {}
+                                the_man::network::event::BehaviourEvent::VoiceErrorConnection {
+                                    to,
+                                    codec,
+                                    channel,
+                                    error,
+                                } => {}
+                            }
+                        }
+                    }
                 }
             }
             libp2p::swarm::SwarmEvent::ConnectionEstablished { peer_id, .. } => {

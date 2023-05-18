@@ -101,9 +101,6 @@ impl ConnectionHandler for Connection {
             Self::Error,
         >,
     > {
-        if let Some(event) = self.out_events.pop_front() {
-            return std::task::Poll::Ready(event);
-        }
         if !self.init {
             self.init = true;
 
@@ -116,8 +113,12 @@ impl ConnectionHandler for Connection {
                 },
             );
         }
+        if let Some(event) = self.out_events.pop_front() {
+            return std::task::Poll::Ready(event);
+        }
 
         if !self.connected && self.inbound.initial() && self.outbound.initial() {
+            println!("Connected!");
             self.connected = true;
             return std::task::Poll::Ready(libp2p::swarm::ConnectionHandlerEvent::Custom(
                 OutputEvent::SuccesfulyConnect,
@@ -138,8 +139,60 @@ impl ConnectionHandler for Connection {
                 }
             },
             Stage::RunningBase(mut future) => match future.poll_unpin(cx) {
-                std::task::Poll::Ready(stream) => {
-                    self.inbound = Stage::RunningBase(async { stream }.boxed());
+                std::task::Poll::Ready((mut stream, event)) => {
+                    if let Some(event) = event {
+                        self.out_events.push_back(event);
+                    }
+                    self.inbound = Stage::RunningBase(
+                        async {
+                            let mut buffer = [0; 1024 * 16];
+                            let len = stream.read(&mut buffer).await.unwrap();
+                            let Ok(buffer) = String::from_utf8(buffer[..len].to_vec()) else {return (stream, None)};
+                            if let Ok(packet) = ron::from_str::<Packet>(&buffer) {
+                                match packet {
+                                    Packet::VoicePacket {
+                                        codec,
+                                        data,
+                                        channel,
+                                    } => {
+                                        return (
+                                            stream,
+                                            Some(ConnectionHandlerEvent::Custom(
+                                                OutputEvent::VoicePacket {
+                                                    codec,
+                                                    data,
+                                                    channel,
+                                                },
+                                            )),
+                                        )
+                                    }
+                                    Packet::VoiceRequest { codec, channel } => {}
+                                    Packet::VoiceAccept { codec, channel } => {}
+                                    Packet::VoiceRefuze { codec, channel } => {}
+                                    Packet::VoiceDisconnect { channel } => {
+                                        return (
+                                            stream,
+                                            Some(ConnectionHandlerEvent::Custom(
+                                                OutputEvent::Disconnected(channel),
+                                            )),
+                                        )
+                                    }
+                                    Packet::VoiceConnect { channel } => {
+                                        println!("Recv channel: {channel}");
+                                        return (
+                                            stream,
+                                            Some(ConnectionHandlerEvent::Custom(
+                                                OutputEvent::Connected(channel),
+                                            )),
+                                        );
+                                    }
+                                }
+                            }
+
+                            (stream, None)
+                        }
+                        .boxed(),
+                    );
                 }
                 std::task::Poll::Pending => {
                     self.inbound = Stage::RunningBase(future);
@@ -155,6 +208,7 @@ impl ConnectionHandler for Connection {
             Stage::RunningInitial(mut future) => match future.poll_unpin(cx) {
                 std::task::Poll::Ready(mut stream) => {
                     let channels = self.initial_connections.clone();
+                    println!("Send channels: {channels:?}");
                     self.outbound = Stage::RunningBase(
                         async {
                             for channel in channels {
@@ -164,7 +218,8 @@ impl ConnectionHandler for Connection {
                                             .unwrap()
                                             .as_bytes(),
                                     )
-                                    .await;
+                                    .await
+                                    .unwrap();
                             }
                             (stream, None)
                         }
@@ -220,7 +275,6 @@ impl ConnectionHandler for Connection {
     }
 
     fn on_behaviour_event(&mut self, event: Self::InEvent) {
-        println!("Conn Event: {event:?}");
         self.events.push_back(event);
     }
 
@@ -273,6 +327,8 @@ impl Stage {
     pub fn initial(&self) -> bool {
         match self {
             Stage::Initial(_) => true,
+            Stage::RunningInitial(_) => true,
+            Stage::RunningBase(_) => true,
             _ => false,
         }
     }

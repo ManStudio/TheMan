@@ -34,7 +34,7 @@ impl TheManBehaviour {
             events: VecDeque::new(),
             mesh: HashMap::new(),
             connected: HashSet::new(),
-            auto_accept: false,
+            auto_accept: true,
             peers: HashSet::new(),
         }
     }
@@ -127,7 +127,7 @@ impl NetworkBehaviour for TheManBehaviour {
         connection_id: libp2p::swarm::ConnectionId,
         event: handler::OutputEvent,
     ) {
-        println!("SWEV: PeerId: {peer_id}, event: {event:?}");
+        // println!("SWEV: PeerId: {peer_id}, event: {event:?}");
         match event {
             handler::OutputEvent::VoicePacket {
                 codec,
