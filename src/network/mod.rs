@@ -1,6 +1,7 @@
 use libp2p::{
     core::upgrade::ReadyUpgrade,
     swarm::{ConnectionHandler, NetworkBehaviour, SubstreamProtocol},
+    PeerId,
 };
 
 use self::handler::Connection;
@@ -9,11 +10,13 @@ pub mod event;
 pub mod handler;
 pub mod packet;
 
-pub struct TheManBehaviour {}
+pub struct TheManBehaviour {
+    peer_id: PeerId,
+}
 
 impl TheManBehaviour {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(peer_id: PeerId) -> Self {
+        Self { peer_id }
     }
 }
 
@@ -55,13 +58,6 @@ impl NetworkBehaviour for TheManBehaviour {
     ) -> std::task::Poll<libp2p::swarm::ToSwarm<Self::OutEvent, libp2p::swarm::THandlerInEvent<Self>>>
     {
         std::task::Poll::Pending
-        // println!(
-        //     "sup: {:?}",
-        //     params
-        //         .supported_protocols()
-        //         .flat_map(|d| String::from_utf8(d))
-        //         .collect::<Vec<String>>()
-        // );
     }
 
     fn handle_established_inbound_connection(
@@ -71,11 +67,7 @@ impl NetworkBehaviour for TheManBehaviour {
         local_addr: &libp2p::Multiaddr,
         remote_addr: &libp2p::Multiaddr,
     ) -> Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
-        // println!("ConnectionId: {:?}", _connection_id);
-        // println!("Peer: {}", peer);
-        // println!("Local_addr: {:?}", local_addr);
-        // println!("Remote addr: {:?}", remote_addr);
-        Connection::new()
+        Connection::new(self.peer_id, peer)
     }
 
     fn handle_established_outbound_connection(
@@ -85,11 +77,7 @@ impl NetworkBehaviour for TheManBehaviour {
         addr: &libp2p::Multiaddr,
         role_override: libp2p::core::Endpoint,
     ) -> Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
-        // println!("ConnectionId: {:?}", _connection_id);
-        // println!("Peer: {}", peer);
-        // println!("addr: {:?}", addr);
-        // println!("Role override: {:?}", role_override);
-        Connection::new()
+        Connection::new(self.peer_id, peer)
     }
 }
 

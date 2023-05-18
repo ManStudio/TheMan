@@ -2,6 +2,7 @@ use libp2p::{
     core::{muxing::SubstreamBox, upgrade::ReadyUpgrade, Negotiated},
     futures::{future::BoxFuture, AsyncReadExt, AsyncWriteExt, FutureExt},
     swarm::{ConnectionHandler, SubstreamProtocol},
+    PeerId,
 };
 
 use super::{Failure, TheManBehaviour};
@@ -10,15 +11,21 @@ pub struct Connection {
     init: bool,
     inbound: Option<BoxFuture<'static, Negotiated<SubstreamBox>>>,
     outbound: Option<BoxFuture<'static, Negotiated<SubstreamBox>>>,
+    peer_id: PeerId,
+    local_peer_id: PeerId,
 }
 
 impl Connection {
-    pub fn new() -> Result<libp2p::swarm::THandler<TheManBehaviour>, libp2p::swarm::ConnectionDenied>
-    {
+    pub fn new(
+        local_peer_id: PeerId,
+        peer_id: PeerId,
+    ) -> Result<libp2p::swarm::THandler<TheManBehaviour>, libp2p::swarm::ConnectionDenied> {
         Ok(Self {
             init: false,
             inbound: None,
             outbound: None,
+            peer_id,
+            local_peer_id,
         })
     }
 }
@@ -74,7 +81,7 @@ impl ConnectionHandler for Connection {
             if let Some(mut inbound) = self.inbound.take() {
                 match inbound.poll_unpin(cx) {
                     std::task::Poll::Ready(_) => {
-                        println!("Recv!");
+                        println!("Recv! Peer: {}", self.peer_id);
                     }
                     std::task::Poll::Pending => {
                         self.inbound = Some(inbound);
@@ -85,7 +92,7 @@ impl ConnectionHandler for Connection {
             if let Some(mut outbount) = self.outbound.take() {
                 match outbount.poll_unpin(cx) {
                     std::task::Poll::Ready(_) => {
-                        println!("Sent!");
+                        println!("Sent! Peer: {}", self.peer_id);
                     }
                     std::task::Poll::Pending => {
                         self.outbound = Some(outbount);
