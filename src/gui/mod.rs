@@ -33,6 +33,7 @@ pub struct TheManGuiState {
     pub query_id_for_record: HashMap<Vec<u8>, QueryId>,
     pub messages: HashMap<TopicHash, Vec<libp2p::gossipsub::Message>>,
     pub subscribers: HashMap<TopicHash, Vec<PeerId>>,
+    pub bootstraping: bool,
 }
 
 impl TheManGuiState {
@@ -85,6 +86,7 @@ impl TheMan {
                 subscribers: HashMap::new(),
                 name: None,
                 query_id_for_record: HashMap::new(),
+                bootstraping: true,
             },
             should_close: false,
             one_time: false,

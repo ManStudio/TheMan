@@ -208,7 +208,6 @@ impl ConnectionHandler for Connection {
             Stage::RunningInitial(mut future) => match future.poll_unpin(cx) {
                 std::task::Poll::Ready(mut stream) => {
                     let channels = self.initial_connections.clone();
-                    println!("Send channels: {channels:?}");
                     self.outbound = Stage::RunningBase(
                         async {
                             for channel in channels {

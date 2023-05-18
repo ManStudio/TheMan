@@ -38,7 +38,7 @@ pub enum Message {
     SwarmStatus(libp2p::swarm::NetworkInfo),
     Save,
     SaveResponse(Option<TheManSaveState>),
-    Bootstrap,
+    BootstrapSet(bool),
     GetBootNodes,
     BootNodes(Vec<(PeerId, NodeStatus, Vec<Multiaddr>)>),
     GetPeers,
@@ -137,9 +137,13 @@ impl TheManLogic {
                 ));
                 self.egui_ctx.request_repaint()
             }
-            Message::Bootstrap => {
+            Message::BootstrapSet(value) => {
                 if let Some(account) = &mut self.state.account {
-                    let _query_id = account.swarm.behaviour_mut().kademlia.bootstrap().unwrap();
+                    if value {
+                        self.bootstrap =
+                            Some(account.swarm.behaviour_mut().kademlia.bootstrap().unwrap());
+                    }
+                    self.bootstraping = value;
                 }
             }
             Message::GetAccounts => {

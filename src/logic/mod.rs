@@ -17,6 +17,7 @@ pub struct TheManLogic {
     pub audio_sender: Sender<Message>,
     pub audio_receiver: Receiver<Message>,
     pub bootstrap: Option<libp2p::kad::QueryId>,
+    pub bootstraping: bool,
     pub subscribed: Vec<TopicHash>,
     pub registration_query: Option<(libp2p::kad::QueryId, Instant)>,
     pub registration_step_1_query: Option<(libp2p::kad::QueryId, Vec<u8>)>,
@@ -43,6 +44,7 @@ impl TheManLogic {
             registration_step_1_query: None,
             audio_sender,
             audio_receiver,
+            bootstraping: true,
         }
     }
 

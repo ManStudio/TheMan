@@ -23,7 +23,7 @@ impl TheManLogic {
                             } => {
                                 if let Some(account) = &mut self.state.account {
                                     if id == self.bootstrap.unwrap() {
-                                        if step.last {
+                                        if step.last && self.bootstraping {
                                             self.bootstrap = Some(
                                                 account
                                                     .swarm
@@ -197,10 +197,7 @@ impl TheManLogic {
                                     channel,
                                 } => {
                                     let _ = self.audio_sender.try_send(Message::Audio(
-                                        super::message::AudioMessage::OutputData {
-                                            id: 1,
-                                            data: data,
-                                        },
+                                        super::message::AudioMessage::OutputData { id: 1, data },
                                     ));
                                 }
                                 the_man::network::event::BehaviourEvent::Request {
