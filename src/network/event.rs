@@ -6,6 +6,11 @@ pub enum BehaviourEvent {
         from: PeerId,
         codec: String,
         data: Vec<u8>,
+        channel: String,
+    },
+    Request {
+        channel: String,
+        from: PeerId,
     },
     InVoice {
         who: PeerId,
