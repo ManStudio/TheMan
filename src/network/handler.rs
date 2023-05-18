@@ -71,21 +71,25 @@ impl ConnectionHandler for Connection {
                 },
             )
         } else {
-            if let Some(inbound) = &mut self.inbound {
+            if let Some(mut inbound) = self.inbound.take() {
                 match inbound.poll_unpin(cx) {
                     std::task::Poll::Ready(_) => {
                         println!("Recv!");
                     }
-                    std::task::Poll::Pending => {}
+                    std::task::Poll::Pending => {
+                        self.inbound = Some(inbound);
+                    }
                 }
             }
 
-            if let Some(outbount) = &mut self.outbound {
+            if let Some(mut outbount) = self.outbound.take() {
                 match outbount.poll_unpin(cx) {
                     std::task::Poll::Ready(_) => {
                         println!("Sent!");
                     }
-                    std::task::Poll::Pending => {}
+                    std::task::Poll::Pending => {
+                        self.outbound = Some(outbount);
+                    }
                 }
             }
             std::task::Poll::Pending
@@ -106,11 +110,11 @@ impl ConnectionHandler for Connection {
         match event {
             libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedInbound(event) => {
                 println!("Inbound: {:?}", event.protocol);
-                self.inbound = Some(send(event.protocol).boxed());
+                self.inbound = Some(recv(event.protocol).boxed());
             }
             libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedOutbound(event) => {
                 println!("Outbound: {:?}", event.protocol);
-                self.outbound = Some(recv(event.protocol).boxed())
+                self.outbound = Some(send(event.protocol).boxed())
             }
             _ => {}
         }
