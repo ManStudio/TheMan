@@ -1,5 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
+use bytes_kman::TBytes;
 use libp2p::{
     core::{muxing::SubstreamBox, upgrade::ReadyUpgrade, Negotiated},
     futures::{future::BoxFuture, AsyncReadExt, AsyncWriteExt, FutureExt},
@@ -132,23 +133,21 @@ impl ConnectionHandler for Connection {
             }
             Stage::RunningInitial(mut future) => match future.poll_unpin(cx) {
                 std::task::Poll::Ready(stream) => {
-                    self.inbound = Stage::RunningBase(async { (stream, None) }.boxed());
+                    self.inbound = Stage::RunningBase(async { (stream, None, Vec::new()) }.boxed());
                 }
                 std::task::Poll::Pending => {
                     self.inbound = Stage::RunningInitial(future);
                 }
             },
             Stage::RunningBase(mut future) => match future.poll_unpin(cx) {
-                std::task::Poll::Ready((mut stream, event)) => {
+                std::task::Poll::Ready((mut stream, event, mut buffer)) => {
                     if let Some(event) = event {
                         self.out_events.push_back(event);
                     }
                     self.inbound = Stage::RunningBase(
                         async {
-                            let mut buffer = [0; 1024 * 16];
-                            let len = stream.read(&mut buffer).await.unwrap();
-                            let Ok(buffer) = String::from_utf8(buffer[..len].to_vec()) else {return (stream, None)};
-                            if let Ok(packet) = ron::from_str::<Packet>(&buffer) {
+                            let packet = Packet::from_bytes(&mut buffer.drain(..));
+                            if let Some(packet) = packet {
                                 match packet {
                                     Packet::VoicePacket {
                                         codec,
@@ -164,6 +163,7 @@ impl ConnectionHandler for Connection {
                                                     channel,
                                                 },
                                             )),
+                                            buffer,
                                         )
                                     }
                                     Packet::VoiceRequest { codec, channel } => {}
@@ -175,6 +175,7 @@ impl ConnectionHandler for Connection {
                                             Some(ConnectionHandlerEvent::Custom(
                                                 OutputEvent::Disconnected(channel),
                                             )),
+                                            buffer,
                                         )
                                     }
                                     Packet::VoiceConnect { channel } => {
@@ -184,12 +185,16 @@ impl ConnectionHandler for Connection {
                                             Some(ConnectionHandlerEvent::Custom(
                                                 OutputEvent::Connected(channel),
                                             )),
+                                            buffer,
                                         );
                                     }
                                 }
+                            } else {
+                                let mut tmp_buffer = [0; 1024 * 16];
+                                let len = stream.read(&mut tmp_buffer).await.unwrap();
+                                buffer.append(&mut tmp_buffer[..len].to_vec());
                             }
-
-                            (stream, None)
+                            (stream, None, buffer)
                         }
                         .boxed(),
                     );
@@ -212,15 +217,11 @@ impl ConnectionHandler for Connection {
                         async {
                             for channel in channels {
                                 stream
-                                    .write_all(
-                                        &ron::to_string(&Packet::VoiceConnect { channel })
-                                            .unwrap()
-                                            .as_bytes(),
-                                    )
+                                    .write_all(&Packet::VoiceConnect { channel }.to_bytes())
                                     .await
                                     .unwrap();
                             }
-                            (stream, None)
+                            (stream, None, Vec::new())
                         }
                         .boxed(),
                     );
@@ -230,13 +231,13 @@ impl ConnectionHandler for Connection {
                 }
             },
             Stage::RunningBase(mut future) => match future.poll_unpin(cx) {
-                std::task::Poll::Ready((mut stream, event)) => {
+                std::task::Poll::Ready((mut stream, event, mut buffer)) => {
                     if let Some(event) = self.events.pop_front() {
                         self.outbound = Stage::RunningBase(
                             async {
                                 stream
                                     .write_all(
-                                        &ron::to_string(&match event {
+                                        &match event {
                                             InputEvent::VoicePacket {
                                                 codec,
                                                 data,
@@ -252,17 +253,17 @@ impl ConnectionHandler for Connection {
                                             InputEvent::Disconnect(channel) => {
                                                 Packet::VoiceDisconnect { channel }
                                             }
-                                        })
-                                        .unwrap()
-                                        .as_bytes(),
+                                        }
+                                        .to_bytes(),
                                     )
                                     .await;
-                                (stream, None)
+                                (stream, None, buffer)
                             }
                             .boxed(),
                         );
                     } else {
-                        self.outbound = Stage::RunningBase(async { (stream, None) }.boxed());
+                        self.outbound =
+                            Stage::RunningBase(async { (stream, None, Vec::new()) }.boxed());
                     }
                 }
                 std::task::Poll::Pending => {
@@ -317,6 +318,7 @@ pub enum Stage {
                         Failure,
                     >,
                 >,
+                Vec<u8>,
             ),
         >,
     ),
@@ -335,17 +337,4 @@ impl Stage {
     pub fn take(&mut self) -> Stage {
         std::mem::replace(self, Stage::None)
     }
-}
-
-async fn send(mut stream: Negotiated<SubstreamBox>) -> Negotiated<SubstreamBox> {
-    let _ = stream.write(b"Hello There!").await.unwrap();
-    stream
-}
-
-async fn recv(mut stream: Negotiated<SubstreamBox>) -> Negotiated<SubstreamBox> {
-    let mut buffer = [0; 1024];
-    let len = stream.read(&mut buffer).await.unwrap();
-    let text = String::from_utf8(buffer[0..len].to_vec()).unwrap();
-    println!("Recv: {text}");
-    stream
 }
