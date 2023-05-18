@@ -12,6 +12,10 @@ pub enum BehaviourEvent {
         channel: String,
         from: PeerId,
     },
+    Disconnected {
+        channel: String,
+        from: PeerId,
+    },
     InVoice {
         who: PeerId,
         codec: String,

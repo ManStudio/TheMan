@@ -15,8 +15,8 @@ pub mod packet;
 pub struct TheManBehaviour {
     peer_id: PeerId,
     events: VecDeque<ToSwarm<event::BehaviourEvent, handler::InputEvent>>,
-    peers: HashSet<PeerId>,
     mesh: HashMap<String, HashMap<PeerId, Stage>>,
+    peers: HashSet<PeerId>,
     connected: HashSet<String>,
     auto_accept: bool,
 }
@@ -32,10 +32,77 @@ impl TheManBehaviour {
         Self {
             peer_id,
             events: VecDeque::new(),
-            peers: HashSet::new(),
             mesh: HashMap::new(),
             connected: HashSet::new(),
             auto_accept: false,
+            peers: HashSet::new(),
+        }
+    }
+
+    pub fn connect(&mut self, channel: String) {
+        for peer in self.peers.iter() {
+            self.events.push_back(ToSwarm::NotifyHandler {
+                peer_id: *peer,
+                handler: libp2p::swarm::NotifyHandler::Any,
+                event: handler::InputEvent::Connect(channel.clone()),
+            });
+        }
+        self.connected.insert(channel);
+    }
+
+    pub fn disconnect(&mut self, channel: String) {
+        for peer in self.peers.iter() {
+            self.events.push_back(ToSwarm::NotifyHandler {
+                peer_id: *peer,
+                handler: libp2p::swarm::NotifyHandler::Any,
+                event: handler::InputEvent::Disconnect(channel.clone()),
+            });
+        }
+        self.connected.remove(&channel);
+    }
+
+    pub fn audio_packet(&mut self, codec: String, data: Vec<u8>) {
+        for (channel, stages) in self.mesh.iter() {
+            let peers = stages
+                .iter()
+                .flat_map(|(p, s)| {
+                    if let Stage::Accepted = s {
+                        Some(*p)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<PeerId>>();
+
+            for peer in peers {
+                self.events.push_back(ToSwarm::NotifyHandler {
+                    peer_id: peer,
+                    handler: libp2p::swarm::NotifyHandler::Any,
+                    event: handler::InputEvent::VoicePacket {
+                        codec: codec.clone(),
+                        data: data.clone(),
+                        channel: channel.clone(),
+                    },
+                })
+            }
+        }
+    }
+    pub fn accept(&mut self, channel: String, peer_id: PeerId) {
+        if let Some(mesh) = self.mesh.get_mut(&channel) {
+            mesh.insert(peer_id, Stage::Accepted);
+        } else {
+            let mut hash = HashMap::new();
+            hash.insert(peer_id, Stage::Accepted);
+            self.mesh.insert(channel, hash);
+        }
+    }
+    pub fn refuze(&mut self, channel: String, peer_id: PeerId) {
+        if let Some(mesh) = self.mesh.get_mut(&channel) {
+            mesh.insert(peer_id, Stage::Requested);
+        } else {
+            let mut hash = HashMap::new();
+            hash.insert(peer_id, Stage::Requested);
+            self.mesh.insert(channel, hash);
         }
     }
 }
@@ -47,20 +114,10 @@ impl NetworkBehaviour for TheManBehaviour {
 
     fn on_swarm_event(&mut self, event: libp2p::swarm::FromSwarm<Self::ConnectionHandler>) {
         match event {
-            libp2p::swarm::FromSwarm::ConnectionEstablished(event) => {}
             libp2p::swarm::FromSwarm::ConnectionClosed(event) => {
                 self.peers.remove(&event.peer_id);
             }
-            libp2p::swarm::FromSwarm::AddressChange(_) => {}
-            libp2p::swarm::FromSwarm::DialFailure(_) => {}
-            libp2p::swarm::FromSwarm::ListenFailure(_) => {}
-            libp2p::swarm::FromSwarm::NewListener(_) => {}
-            libp2p::swarm::FromSwarm::NewListenAddr(_) => {}
-            libp2p::swarm::FromSwarm::ExpiredListenAddr(_) => {}
-            libp2p::swarm::FromSwarm::ListenerError(_) => {}
-            libp2p::swarm::FromSwarm::ListenerClosed(_) => {}
-            libp2p::swarm::FromSwarm::NewExternalAddr(_) => {}
-            libp2p::swarm::FromSwarm::ExpiredExternalAddr(_) => {}
+            _ => {}
         }
     }
 
@@ -111,7 +168,20 @@ impl NetworkBehaviour for TheManBehaviour {
                     self.mesh.insert(channel, hash);
                 }
             }
-            handler::OutputEvent::Disconnected(channel) => {}
+            handler::OutputEvent::Disconnected(channel) => {
+                self.events.push_back(ToSwarm::GenerateEvent(
+                    event::BehaviourEvent::Disconnected {
+                        channel: channel.clone(),
+                        from: peer_id,
+                    },
+                ));
+                if let Some(mesh) = self.mesh.get_mut(&channel) {
+                    mesh.remove(&peer_id);
+                }
+            }
+            handler::OutputEvent::SuccesfulyConnect => {
+                self.peers.insert(peer_id);
+            }
         }
     }
 
@@ -133,7 +203,7 @@ impl NetworkBehaviour for TheManBehaviour {
         local_addr: &libp2p::Multiaddr,
         remote_addr: &libp2p::Multiaddr,
     ) -> Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
-        Connection::new(self.peer_id, peer)
+        Connection::new(self.peer_id, peer, self.connected.clone())
     }
 
     fn handle_established_outbound_connection(
@@ -143,7 +213,7 @@ impl NetworkBehaviour for TheManBehaviour {
         addr: &libp2p::Multiaddr,
         role_override: libp2p::core::Endpoint,
     ) -> Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
-        Connection::new(self.peer_id, peer)
+        Connection::new(self.peer_id, peer, self.connected.clone())
     }
 }
 

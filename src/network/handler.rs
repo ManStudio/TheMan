@@ -1,33 +1,43 @@
+use std::collections::{HashSet, VecDeque};
+
 use libp2p::{
     core::{muxing::SubstreamBox, upgrade::ReadyUpgrade, Negotiated},
     futures::{future::BoxFuture, AsyncReadExt, AsyncWriteExt, FutureExt},
-    swarm::{ConnectionHandler, SubstreamProtocol},
+    swarm::{ConnectionHandler, ConnectionHandlerEvent, SubstreamProtocol},
     PeerId,
 };
 
-use super::{Failure, TheManBehaviour};
+use super::{packet::Packet, Failure, TheManBehaviour};
 
 pub struct Connection {
     init: bool,
-    inbound: Option<BoxFuture<'static, Negotiated<SubstreamBox>>>,
-    outbound: Option<BoxFuture<'static, Negotiated<SubstreamBox>>>,
+    inbound: Stage,
+    outbound: Stage,
     peer_id: PeerId,
     local_peer_id: PeerId,
     connected: bool,
+    initial_connections: HashSet<String>,
+    events: VecDeque<InputEvent>,
+    out_events:
+        VecDeque<ConnectionHandlerEvent<ReadyUpgrade<&'static str>, String, OutputEvent, Failure>>,
 }
 
 impl Connection {
     pub fn new(
         local_peer_id: PeerId,
         peer_id: PeerId,
+        initial_connected: HashSet<String>,
     ) -> Result<libp2p::swarm::THandler<TheManBehaviour>, libp2p::swarm::ConnectionDenied> {
         Ok(Self {
             init: false,
-            inbound: None,
-            outbound: None,
+            inbound: Stage::None,
+            outbound: Stage::None,
             peer_id,
             local_peer_id,
             connected: false,
+            initial_connections: initial_connected,
+            events: VecDeque::new(),
+            out_events: VecDeque::new(),
         })
     }
 }
@@ -39,6 +49,8 @@ pub enum InputEvent {
         data: Vec<u8>,
         channel: String,
     },
+    Connect(String),
+    Disconnect(String),
 }
 
 #[derive(Debug)]
@@ -50,6 +62,7 @@ pub enum OutputEvent {
     },
     Connected(String),
     Disconnected(String),
+    SuccesfulyConnect,
 }
 
 impl ConnectionHandler for Connection {
@@ -88,6 +101,9 @@ impl ConnectionHandler for Connection {
             Self::Error,
         >,
     > {
+        if let Some(event) = self.out_events.pop_front() {
+            return std::task::Poll::Ready(event);
+        }
         if !self.init {
             self.init = true;
 
@@ -101,39 +117,111 @@ impl ConnectionHandler for Connection {
             );
         }
 
-        if !self.connected && self.inbound.is_some() && self.outbound.is_some() {
+        if !self.connected && self.inbound.initial() && self.outbound.initial() {
             self.connected = true;
             return std::task::Poll::Ready(libp2p::swarm::ConnectionHandlerEvent::Custom(
-                OutputEvent::Connected,
+                OutputEvent::SuccesfulyConnect,
             ));
         }
 
-        if let Some(mut inbound) = self.inbound.take() {
-            match inbound.poll_unpin(cx) {
-                std::task::Poll::Ready(_) => {
-                    println!("Recv! Peer: {}", self.peer_id);
+        match self.inbound.take() {
+            Stage::None => {}
+            Stage::Initial(stream) => {
+                self.inbound = Stage::RunningInitial(async { stream }.boxed());
+            }
+            Stage::RunningInitial(mut future) => match future.poll_unpin(cx) {
+                std::task::Poll::Ready(stream) => {
+                    self.inbound = Stage::RunningBase(async { (stream, None) }.boxed());
                 }
                 std::task::Poll::Pending => {
-                    self.inbound = Some(inbound);
+                    self.inbound = Stage::RunningInitial(future);
                 }
-            }
+            },
+            Stage::RunningBase(mut future) => match future.poll_unpin(cx) {
+                std::task::Poll::Ready(stream) => {
+                    self.inbound = Stage::RunningBase(async { stream }.boxed());
+                }
+                std::task::Poll::Pending => {
+                    self.inbound = Stage::RunningBase(future);
+                }
+            },
         }
 
-        if let Some(mut outbount) = self.outbound.take() {
-            match outbount.poll_unpin(cx) {
-                std::task::Poll::Ready(_) => {
-                    println!("Sent! Peer: {}", self.peer_id);
+        match self.outbound.take() {
+            Stage::None => {}
+            Stage::Initial(stream) => {
+                self.outbound = Stage::RunningInitial(async { stream }.boxed());
+            }
+            Stage::RunningInitial(mut future) => match future.poll_unpin(cx) {
+                std::task::Poll::Ready(mut stream) => {
+                    let channels = self.initial_connections.clone();
+                    self.outbound = Stage::RunningBase(
+                        async {
+                            for channel in channels {
+                                stream
+                                    .write_all(
+                                        &ron::to_string(&Packet::VoiceConnect { channel })
+                                            .unwrap()
+                                            .as_bytes(),
+                                    )
+                                    .await;
+                            }
+                            (stream, None)
+                        }
+                        .boxed(),
+                    );
                 }
                 std::task::Poll::Pending => {
-                    self.outbound = Some(outbount);
+                    self.outbound = Stage::RunningInitial(future);
                 }
-            }
+            },
+            Stage::RunningBase(mut future) => match future.poll_unpin(cx) {
+                std::task::Poll::Ready((mut stream, event)) => {
+                    if let Some(event) = self.events.pop_front() {
+                        self.outbound = Stage::RunningBase(
+                            async {
+                                stream
+                                    .write_all(
+                                        &ron::to_string(&match event {
+                                            InputEvent::VoicePacket {
+                                                codec,
+                                                data,
+                                                channel,
+                                            } => Packet::VoicePacket {
+                                                codec,
+                                                data,
+                                                channel,
+                                            },
+                                            InputEvent::Connect(channel) => {
+                                                Packet::VoiceConnect { channel }
+                                            }
+                                            InputEvent::Disconnect(channel) => {
+                                                Packet::VoiceDisconnect { channel }
+                                            }
+                                        })
+                                        .unwrap()
+                                        .as_bytes(),
+                                    )
+                                    .await;
+                                (stream, None)
+                            }
+                            .boxed(),
+                        );
+                    } else {
+                        self.outbound = Stage::RunningBase(async { (stream, None) }.boxed());
+                    }
+                }
+                std::task::Poll::Pending => {
+                    self.outbound = Stage::RunningBase(future);
+                }
+            },
         }
         std::task::Poll::Pending
     }
 
     fn on_behaviour_event(&mut self, event: Self::InEvent) {
         println!("Conn Event: {event:?}");
+        self.events.push_back(event);
     }
 
     fn on_connection_event(
@@ -148,14 +236,49 @@ impl ConnectionHandler for Connection {
         match event {
             libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedInbound(event) => {
                 println!("Inbound: {:?}", event.protocol);
-                self.inbound = Some(recv(event.protocol).boxed());
+                self.inbound = Stage::Initial(event.protocol);
             }
             libp2p::swarm::handler::ConnectionEvent::FullyNegotiatedOutbound(event) => {
                 println!("Outbound: {:?}", event.protocol);
-                self.outbound = Some(send(event.protocol).boxed())
+                self.outbound = Stage::Initial(event.protocol)
             }
             _ => {}
         }
+    }
+}
+
+pub enum Stage {
+    None,
+    Initial(Negotiated<SubstreamBox>),
+    RunningInitial(BoxFuture<'static, Negotiated<SubstreamBox>>),
+    RunningBase(
+        BoxFuture<
+            'static,
+            (
+                Negotiated<SubstreamBox>,
+                Option<
+                    ConnectionHandlerEvent<
+                        ReadyUpgrade<&'static str>,
+                        String,
+                        OutputEvent,
+                        Failure,
+                    >,
+                >,
+            ),
+        >,
+    ),
+}
+
+impl Stage {
+    pub fn initial(&self) -> bool {
+        match self {
+            Stage::Initial(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn take(&mut self) -> Stage {
+        std::mem::replace(self, Stage::None)
     }
 }
 

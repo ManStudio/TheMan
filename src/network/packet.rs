@@ -22,4 +22,7 @@ pub enum Packet {
     VoiceDisconnect {
         channel: String,
     },
+    VoiceConnect {
+        channel: String,
+    },
 }
