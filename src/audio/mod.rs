@@ -200,7 +200,7 @@ impl Audio {
                                     ));
                                     str.write().unwrap().codec = Some(codec);
                                 },
-                                |_| panic!("Input stream error!"),
+                                |error| eprintln!("Input stream error! {error}"),
                                 None,
                             )
                             .unwrap();
@@ -275,7 +275,7 @@ impl Audio {
                                     );
                                     str.write().unwrap().codec = Some(codec);
                                 },
-                                |_| panic!("Output stream error!"),
+                                |error| eprintln!("Output stream error! {error}"),
                                 None,
                             )
                             .unwrap();

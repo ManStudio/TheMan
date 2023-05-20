@@ -208,7 +208,7 @@ impl Codec for CodecOpus {
     fn decode(&mut self, data: &mut Vec<u8>) -> Vec<f32> {
         let mut buffer = Vec::new();
         while data.len() >= 0usize.size() {
-            let data = Vec::<u8>::from_bytes(&mut data.drain(..)).unwrap();
+            let data = Vec::<u8>::from_bytes(data).unwrap();
             if data.is_empty() {
                 continue;
             }

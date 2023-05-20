@@ -932,18 +932,18 @@ dependencies = [
 
 [[package]]
 name = "bytes-kman"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c91188683a99084a2cddebff5630ec04bfddd0d3e9baed22c4b0a22030a41697"
+checksum = "738a289563705028bbdab3ef7dadb5883e107925c6637a7a0fd46b0a721c4f23"
 dependencies = [
  "bytes-kman-derive",
 ]
 
 [[package]]
 name = "bytes-kman-derive"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a88ef6e2ca731e859b44b2dbd4b83857e6505046e362800cc1530b107b7bc1ee"
+checksum = "38347e05458c9b66946aa32e91128d53d87faf4aa5e1fd604a3a8acb7da688e2"
 dependencies = [
  "proc-macro2",
  "quote",

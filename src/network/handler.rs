@@ -146,7 +146,7 @@ impl ConnectionHandler for Connection {
                     }
                     self.inbound = Stage::RunningBase(
                         async {
-                            let packet = Packet::from_bytes(&mut buffer.drain(..));
+                            let packet = Packet::from_bytes(&mut buffer);
                             if let Some(packet) = packet {
                                 match packet {
                                     Packet::VoicePacket {
