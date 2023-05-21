@@ -29,6 +29,8 @@ pub enum AudioMessage {
     DestroyOuputChannel { id: usize },
     InputData { id: usize, data: Vec<u8> },
     OutputData { id: usize, data: Vec<u8> },
+    InputError { id: usize, error: String },
+    OutputError { id: usize, error: String },
 }
 
 #[derive(Debug)]

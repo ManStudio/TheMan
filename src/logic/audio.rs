@@ -27,6 +27,34 @@ impl TheManLogic {
                 //         data: data,
                 //     }));
             }
+            Message::Audio(AudioMessage::OutputError { id, error }) => {
+                eprintln!("Logic: AudioOutput id: {id}, has error: {error}");
+                let _ = self
+                    .audio_sender
+                    .send(Message::Audio(AudioMessage::DestroyOuputChannel { id }))
+                    .await;
+                let _ = self
+                    .audio_sender
+                    .send(Message::Audio(AudioMessage::CreateOutputChannel {
+                        id,
+                        codec: "opus".to_string(),
+                    }))
+                    .await;
+            }
+            Message::Audio(AudioMessage::InputError { id, error }) => {
+                eprintln!("Logic: AudioInput id: {id}, has error: {error}");
+                let _ = self
+                    .audio_sender
+                    .send(Message::Audio(AudioMessage::DestroyInputChannel { id }))
+                    .await;
+                let _ = self
+                    .audio_sender
+                    .send(Message::Audio(AudioMessage::CreateInputChannel {
+                        id,
+                        codec: "opus".to_string(),
+                    }))
+                    .await;
+            }
             _ => {}
         }
     }

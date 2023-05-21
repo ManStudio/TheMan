@@ -186,6 +186,7 @@ impl Audio {
                             output_buffer: Vec::new(),
                         }));
                         let str = stream.clone();
+                        let str2 = stream.clone();
                         let cpal_stream = input_device
                             .build_input_stream(
                                 move |input: &[f32], _| {
@@ -200,7 +201,16 @@ impl Audio {
                                     ));
                                     str.write().unwrap().codec = Some(codec);
                                 },
-                                |error| eprintln!("Input stream error! {error}"),
+                                move |error| {
+                                    let id = str2.read().unwrap().id.clone();
+                                    let _ = str2.read().unwrap().sender.try_send(Message::Audio(
+                                        AudioMessage::InputError {
+                                            id,
+                                            error: error.to_string(),
+                                        },
+                                    ));
+                                    eprintln!("Input stream error! {error}");
+                                },
                                 None,
                             )
                             .unwrap();
@@ -251,6 +261,7 @@ impl Audio {
                             output_buffer: Vec::new(),
                         }));
                         let str = stream.clone();
+                        let str2 = stream.clone();
                         let cpal_stream = output_device
                             .build_output_stream(
                                 move |output: &mut [f32], _| {
@@ -275,7 +286,16 @@ impl Audio {
                                     );
                                     str.write().unwrap().codec = Some(codec);
                                 },
-                                |error| eprintln!("Output stream error! {error}"),
+                                move |error| {
+                                    let id = str2.read().unwrap().id.clone();
+                                    let _ = str2.read().unwrap().sender.try_send(Message::Audio(
+                                        AudioMessage::OutputError {
+                                            id,
+                                            error: error.to_string(),
+                                        },
+                                    ));
+                                    eprintln!("Output stream error! {error}");
+                                },
                                 None,
                             )
                             .unwrap();
@@ -299,6 +319,14 @@ impl Audio {
                 } else {
                     eprintln!("Invalid stream: {id}")
                 }
+            }
+            Message::Audio(AudioMessage::DestroyInputChannel { id }) => {
+                self.streams
+                    .retain(|stream| stream.read().unwrap().id != id);
+            }
+            Message::Audio(AudioMessage::DestroyOuputChannel { id }) => {
+                self.streams
+                    .retain(|stream| stream.read().unwrap().id != id);
             }
             _ => {}
         }
