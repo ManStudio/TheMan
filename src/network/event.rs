@@ -16,29 +16,8 @@ pub enum BehaviourEvent {
         channel: String,
         from: PeerId,
     },
-    InVoice {
-        who: PeerId,
-        codec: String,
-        chennel: String,
-    },
-    VoiceRequestConnect {
-        from: PeerId,
-        codec: String,
-        channel: String,
-    },
-    VoiceAccept {
-        to: PeerId,
-        codec: String,
-        channel: String,
-    },
-    VoiceConnectedTo {
-        to: PeerId,
-        codec: String,
-        channel: String,
-    },
     VoiceDisconnected {
         from: PeerId,
-        channel: String,
     },
     VoiceErrorConnection {
         to: PeerId,

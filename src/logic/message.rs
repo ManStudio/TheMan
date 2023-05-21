@@ -34,9 +34,21 @@ pub enum AudioMessage {
 }
 
 #[derive(Debug)]
+pub enum VoiceMessage {
+    Connect(String),
+    Disconnect(String),
+    Request(String, PeerId),
+    UnRequest(String, PeerId),
+    Disconnected(PeerId),
+    Accept(String, PeerId),
+    Refuse(String, PeerId),
+}
+
+#[derive(Debug)]
 pub enum Message {
     Gui(GuiMessage),
     Audio(AudioMessage),
+    Voice(VoiceMessage),
     SwarmStatus(libp2p::swarm::NetworkInfo),
     Save,
     SaveResponse(Option<TheManSaveState>),
@@ -241,6 +253,34 @@ impl TheManLogic {
                     let _ = self
                         .sender
                         .try_send(Message::ResSearchForRecord(key, query_id));
+                }
+            }
+            Message::Voice(VoiceMessage::Connect(channel)) => {
+                if let Some(account) = &mut self.state.account {
+                    account.swarm.behaviour_mut().the_man.connect(channel);
+                }
+            }
+            Message::Voice(VoiceMessage::Disconnect(channel)) => {
+                if let Some(account) = &mut self.state.account {
+                    account.swarm.behaviour_mut().the_man.disconnect(channel);
+                }
+            }
+            Message::Voice(VoiceMessage::Accept(channel, peer_id)) => {
+                if let Some(account) = &mut self.state.account {
+                    account
+                        .swarm
+                        .behaviour_mut()
+                        .the_man
+                        .accept(channel, peer_id);
+                }
+            }
+            Message::Voice(VoiceMessage::Refuse(channel, peer_id)) => {
+                if let Some(account) = &mut self.state.account {
+                    account
+                        .swarm
+                        .behaviour_mut()
+                        .the_man
+                        .refuse(channel, peer_id);
                 }
             }
             _ => {}

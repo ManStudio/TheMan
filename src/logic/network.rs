@@ -203,41 +203,44 @@ impl TheManLogic {
                                 the_man::network::event::BehaviourEvent::Request {
                                     channel,
                                     from,
-                                } => {}
+                                } => {
+                                    println!("Voice: request: channel: {channel}, from: {from}");
+                                    self.sender.try_send(Message::Voice(
+                                        crate::logic::message::VoiceMessage::Request(channel, from),
+                                    ));
+                                    self.egui_ctx.request_repaint();
+                                }
                                 the_man::network::event::BehaviourEvent::Disconnected {
                                     channel,
                                     from,
-                                } => {}
-                                the_man::network::event::BehaviourEvent::InVoice {
-                                    who,
-                                    codec,
-                                    chennel,
-                                } => {}
-                                the_man::network::event::BehaviourEvent::VoiceRequestConnect {
-                                    from,
-                                    codec,
-                                    channel,
-                                } => {}
-                                the_man::network::event::BehaviourEvent::VoiceAccept {
-                                    to,
-                                    codec,
-                                    channel,
-                                } => {}
-                                the_man::network::event::BehaviourEvent::VoiceConnectedTo {
-                                    to,
-                                    codec,
-                                    channel,
-                                } => {}
+                                } => {
+                                    println!(
+                                        "Voice: Disconnect:  channel: {channel}, from: {from}"
+                                    );
+                                    self.sender.try_send(Message::Voice(
+                                        crate::logic::message::VoiceMessage::UnRequest(
+                                            channel, from,
+                                        ),
+                                    ));
+                                    self.egui_ctx.request_repaint();
+                                }
                                 the_man::network::event::BehaviourEvent::VoiceDisconnected {
                                     from,
-                                    channel,
-                                } => {}
+                                } => {
+                                    println!("VoiceDisconnected: from: {from}");
+                                    self.sender.try_send(Message::Voice(
+                                        crate::logic::message::VoiceMessage::Disconnected(from),
+                                    ));
+                                    self.egui_ctx.request_repaint();
+                                }
                                 the_man::network::event::BehaviourEvent::VoiceErrorConnection {
                                     to,
                                     codec,
                                     channel,
                                     error,
-                                } => {}
+                                } => {
+                                    println!("VoiceErrorConnection: to: {to}, codec: {codec}, channel: {channel}, error: {error}");
+                                }
                             }
                         }
                     }

@@ -11,6 +11,7 @@ mod peers;
 mod query;
 mod querys;
 mod swarm_status;
+mod voice_channel;
 
 pub use account::TabAccount;
 pub use accounts::TabAccounts;
@@ -23,6 +24,7 @@ pub use peers::TabPeers;
 pub use query::TabQuery;
 pub use querys::TabQuerys;
 pub use swarm_status::TabSwarmStatus;
+pub use voice_channel::TabVoiceChannel;
 
 use super::TheManGuiState;
 

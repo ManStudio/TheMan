@@ -46,7 +46,7 @@ impl Tab for TabChannels {
                         .selectable_label(false, format!("響 {}", channel.0))
                         .clicked()
                     {
-                        script = format!("o8,{}", channel.0);
+                        script = format!("o11,{}", channel.0);
                     }
                 }
             }

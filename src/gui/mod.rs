@@ -33,6 +33,7 @@ pub struct TheManGuiState {
     pub query_id_for_record: HashMap<Vec<u8>, QueryId>,
     pub messages: HashMap<TopicHash, Vec<libp2p::gossipsub::Message>>,
     pub subscribers: HashMap<TopicHash, Vec<PeerId>>,
+    pub voice_connected: HashMap<String, HashMap<PeerId, bool>>,
     pub bootstraping: bool,
 }
 
@@ -66,6 +67,7 @@ impl TheMan {
         tab_manager.register::<TabChannels>(); // 8
         tab_manager.register::<TabQuery>(); // 9
         tab_manager.register::<TabQuerys>(); // 10
+        tab_manager.register::<TabVoiceChannel>(); // 11
 
         tab_manager.execute("o0;o1;o2;o3;o4");
 
@@ -87,6 +89,7 @@ impl TheMan {
                 name: None,
                 query_id_for_record: HashMap::new(),
                 bootstraping: true,
+                voice_connected: HashMap::new(),
             },
             should_close: false,
             one_time: false,
@@ -141,6 +144,28 @@ impl TheMan {
                 Message::DestroySubscriber(peer_id, topic) => {
                     if let Some(subscribed) = self.state.subscribers.get_mut(&topic) {
                         subscribed.retain(|p| *p != peer_id);
+                    }
+                }
+                Message::Voice(crate::logic::message::VoiceMessage::Request(channel, peer_id)) => {
+                    if let Some(channel) = self.state.voice_connected.get_mut(&channel) {
+                        channel.insert(peer_id, false);
+                    } else {
+                        let mut hash = HashMap::new();
+                        hash.insert(peer_id, false);
+                        self.state.voice_connected.insert(channel, hash);
+                    }
+                }
+                Message::Voice(crate::logic::message::VoiceMessage::UnRequest(
+                    channel,
+                    peer_id,
+                )) => {
+                    if let Some(channel) = self.state.voice_connected.get_mut(&channel) {
+                        channel.retain(|peer, _| *peer != peer_id);
+                    }
+                }
+                Message::Voice(crate::logic::message::VoiceMessage::Disconnected(peer_id)) => {
+                    for (_, channel) in self.state.voice_connected.iter_mut() {
+                        channel.retain(|peer, _| *peer != peer_id);
                     }
                 }
                 _ => {}

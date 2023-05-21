@@ -166,9 +166,6 @@ impl ConnectionHandler for Connection {
                                             buffer,
                                         )
                                     }
-                                    Packet::VoiceRequest { codec, channel } => {}
-                                    Packet::VoiceAccept { codec, channel } => {}
-                                    Packet::VoiceRefuze { codec, channel } => {}
                                     Packet::VoiceDisconnect { channel } => {
                                         return (
                                             stream,

@@ -34,7 +34,7 @@ impl TheManBehaviour {
             events: VecDeque::new(),
             mesh: HashMap::new(),
             connected: HashSet::new(),
-            auto_accept: true,
+            auto_accept: false,
             peers: HashSet::new(),
         }
     }
@@ -96,7 +96,7 @@ impl TheManBehaviour {
             self.mesh.insert(channel, hash);
         }
     }
-    pub fn refuze(&mut self, channel: String, peer_id: PeerId) {
+    pub fn refuse(&mut self, channel: String, peer_id: PeerId) {
         if let Some(mesh) = self.mesh.get_mut(&channel) {
             mesh.insert(peer_id, Stage::Requested);
         } else {
@@ -115,6 +115,11 @@ impl NetworkBehaviour for TheManBehaviour {
     fn on_swarm_event(&mut self, event: libp2p::swarm::FromSwarm<Self::ConnectionHandler>) {
         match event {
             libp2p::swarm::FromSwarm::ConnectionClosed(event) => {
+                self.events.push_back(ToSwarm::GenerateEvent(
+                    event::BehaviourEvent::VoiceDisconnected {
+                        from: event.peer_id,
+                    },
+                ));
                 self.peers.remove(&event.peer_id);
             }
             _ => {}
