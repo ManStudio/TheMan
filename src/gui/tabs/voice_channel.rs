@@ -77,8 +77,14 @@ impl Tab for TabVoiceChannel {
                                     for (peer, connected) in
                                         peers.iter_mut().filter(|(_, state)| **state)
                                     {
-                                        if ui.selectable_label(false, peer.to_string()).clicked() {
-                                            state.sender.try_send(Message::Voice(
+                                        let name =
+                                            if let Some(name) = state.register_names.get(peer) {
+                                                name.clone()
+                                            } else {
+                                                format!("PeerId: {peer}")
+                                            };
+                                        if ui.selectable_label(false, name).clicked() {
+                                            let _ = state.sender.try_send(Message::Voice(
                                                 VoiceMessage::Refuse(self.name.clone(), *peer),
                                             ));
                                             *connected = false;
@@ -103,8 +109,15 @@ impl Tab for TabVoiceChannel {
                                     for (peer, connected) in
                                         peers.iter_mut().filter(|(_, state)| !**state)
                                     {
-                                        if ui.selectable_label(false, peer.to_string()).clicked() {
-                                            state.sender.try_send(Message::Voice(
+                                        let name =
+                                            if let Some(name) = state.register_names.get(peer) {
+                                                name.clone()
+                                            } else {
+                                                format!("PeerId: {peer}")
+                                            };
+
+                                        if ui.selectable_label(false, name).clicked() {
+                                            let _ = state.sender.try_send(Message::Voice(
                                                 VoiceMessage::Accept(self.name.clone(), *peer),
                                             ));
                                             *connected = true;

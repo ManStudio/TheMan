@@ -80,14 +80,38 @@ impl Tab for TabMessageChannel {
                             |ui, range| {
                                 for message in &messages[range] {
                                     ui.horizontal(|ui| {
-                                        let from = match &message.source {
-                                            Some(s) => s.to_string(),
-                                            None => "NoBudy".to_string(),
+                                        match &message.source {
+                                            Some(from) => {
+                                                if let Some(peer_id) = &state.peer_id {
+                                                    if from == peer_id {
+                                                        ui.label("From You");
+                                                    } else {
+                                                        if let Some(from) =
+                                                            state.register_names.get(from)
+                                                        {
+                                                            ui.label(format!("From: {from}"));
+                                                        } else {
+                                                            ui.label("From PeerId: ");
+                                                            if ui
+                                                                .selectable_label(
+                                                                    false,
+                                                                    &from.to_string(),
+                                                                )
+                                                                .clicked()
+                                                            {
+                                                                ui.output_mut(|out| {
+                                                                    out.copied_text =
+                                                                        from.to_string()
+                                                                });
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            None => {
+                                                ui.label("From: NoBudy");
+                                            }
                                         };
-                                        ui.label("From: ");
-                                        if ui.selectable_label(false, &from).clicked() {
-                                            ui.output_mut(|out| out.copied_text = from.clone());
-                                        }
                                     });
                                     let text = match String::from_utf8(message.data.clone()) {
                                         Ok(text) => text,
@@ -128,8 +152,15 @@ impl Tab for TabMessageChannel {
                         peers.len(),
                         |ui, range| {
                             for peer in &peers[range] {
-                                if ui.selectable_label(false, format!("{}", peer)).clicked() {
-                                    ui.output_mut(|out| out.copied_text = format!("{}", peer));
+                                if let Some(name) = state.register_names.get(&peer) {
+                                    ui.label(name);
+                                } else {
+                                    if ui
+                                        .selectable_label(false, format!("PeerId: {}", peer))
+                                        .clicked()
+                                    {
+                                        ui.output_mut(|out| out.copied_text = format!("{}", peer));
+                                    }
                                 }
                                 ui.separator();
                             }
@@ -149,6 +180,17 @@ impl Tab for TabMessageChannel {
                     topic.hash(),
                     self.message.clone().into_bytes(),
                 ));
+                let message = libp2p::gossipsub::Message {
+                    source: state.peer_id,
+                    data: self.message.as_bytes().to_vec(),
+                    sequence_number: None,
+                    topic: topic.hash(),
+                };
+                if let Some(messages) = state.messages.get_mut(&topic.hash()) {
+                    messages.push(message);
+                } else {
+                    state.messages.insert(topic.hash(), vec![message]);
+                }
             }
         });
         None
