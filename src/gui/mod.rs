@@ -21,7 +21,7 @@ pub struct TheManGuiState {
     pub kademlia_status: Option<libp2p::swarm::NetworkInfo>,
     pub save: Option<Option<TheManSaveState>>,
     pub bootnodes: Vec<(PeerId, NodeStatus, Vec<Multiaddr>)>,
-    pub peers: Vec<(PeerId, PeerStatus)>,
+    pub peers: HashMap<PeerId, PeerStatus>,
     pub peer_id: Option<PeerId>,
     pub name: Option<String>,
     pub receiver: tokio::sync::mpsc::Receiver<Message>,
@@ -70,6 +70,7 @@ impl TheMan {
         tab_manager.register::<TabQuery>(); // 9
         tab_manager.register::<TabQuerys>(); // 10
         tab_manager.register::<TabVoiceChannel>(); // 11
+        tab_manager.register::<TabFriends>(); // 12
 
         tab_manager.execute("o0;o1;o2;o3;o4");
 
@@ -78,7 +79,7 @@ impl TheMan {
                 kademlia_status: None,
                 save: None,
                 bootnodes: Vec::new(),
-                peers: Vec::new(),
+                peers: HashMap::new(),
                 receiver,
                 sender,
                 peer_id: None,

@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{collections::HashMap, time::Instant};
 
 use chrono::Utc;
 use libp2p::{
@@ -59,7 +59,7 @@ pub enum Message {
     GetBootNodes,
     BootNodes(Vec<(PeerId, NodeStatus, Vec<Multiaddr>)>),
     GetPeers,
-    Peers(Vec<(PeerId, PeerStatus)>),
+    Peers(HashMap<PeerId, PeerStatus>),
     AccountActivate(usize, PeerId),
     SetAccount(usize),
     GetAccounts,
@@ -145,13 +145,9 @@ impl TheManLogic {
                 }
             }
             Message::GetPeers => {
-                let _ = self.sender.try_send(Message::Peers(
-                    self.state
-                        .peers
-                        .iter()
-                        .map(|(d, e)| (*d, e.clone()))
-                        .collect::<Vec<_>>(),
-                ));
+                let _ = self
+                    .sender
+                    .try_send(Message::Peers(self.state.peers.clone()));
                 self.egui_ctx.request_repaint()
             }
             Message::BootstrapSet(value) => {

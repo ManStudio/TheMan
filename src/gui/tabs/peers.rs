@@ -26,7 +26,7 @@ impl Tab for TabPeers {
             .peers
             .iter()
             .filter(|peer| peer.0.to_string().contains(&self.filter))
-            .collect::<Vec<&(PeerId, PeerStatus)>>();
+            .collect::<Vec<(&PeerId, &PeerStatus)>>();
         ui.horizontal(|ui| {
             ui.label(format!("Peers: {}", peers.len()));
             ui.separator();
