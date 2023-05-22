@@ -10,14 +10,17 @@ use libp2p::{
 };
 
 use crate::{
-    save_state::{Account, TheManSaveState},
+    save_state::{Account, Friend, TheManSaveState},
     state::PeerStatus,
 };
 
 use super::TheManLogic;
 
 #[derive(Debug)]
-pub enum GuiMessage {}
+pub enum GuiMessage {
+    Friends(Vec<Friend>),
+    RefreshFriends,
+}
 
 #[derive(Debug)]
 pub enum AudioMessage {
@@ -197,6 +200,19 @@ impl TheManLogic {
                     let _ = self
                         .sender
                         .try_send(Message::Accounts(self.state.accounts.clone()));
+
+                    let _ = self
+                        .sender
+                        .try_send(Message::Gui(GuiMessage::Friends(account.friends.clone())));
+
+                    for friend in account.friends.iter() {
+                        let _ = account
+                            .swarm
+                            .behaviour_mut()
+                            .kademlia
+                            .get_closest_peers(friend.peer_id);
+                    }
+
                     self.egui_ctx.request_repaint()
                 }
             }
@@ -305,6 +321,22 @@ impl TheManLogic {
                         .behaviour_mut()
                         .the_man
                         .refuse(channel, peer_id);
+                }
+            }
+            Message::Gui(GuiMessage::Friends(friends)) => {
+                if let Some(account) = &mut self.state.account {
+                    account.friends = friends;
+                }
+            }
+            Message::Gui(GuiMessage::RefreshFriends) => {
+                if let Some(account) = &mut self.state.account {
+                    for friend in account.friends.iter() {
+                        let _ = account
+                            .swarm
+                            .behaviour_mut()
+                            .kademlia
+                            .get_closest_peers(friend.peer_id);
+                    }
                 }
             }
             _ => {}

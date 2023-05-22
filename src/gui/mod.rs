@@ -10,7 +10,7 @@ use libp2p::{
 
 use crate::{
     logic::message::Message,
-    save_state::{Account, TheManSaveState},
+    save_state::{Account, Friend, TheManSaveState},
     state::PeerStatus,
 };
 
@@ -34,6 +34,8 @@ pub struct TheManGuiState {
     pub messages: HashMap<TopicHash, Vec<libp2p::gossipsub::Message>>,
     pub subscribers: HashMap<TopicHash, Vec<PeerId>>,
     pub voice_connected: HashMap<String, HashMap<PeerId, bool>>,
+    pub friends: Vec<Friend>,
+    pub register_names: HashMap<PeerId, String>,
     pub bootstraping: bool,
 }
 
@@ -90,6 +92,8 @@ impl TheMan {
                 query_id_for_record: HashMap::new(),
                 bootstraping: true,
                 voice_connected: HashMap::new(),
+                friends: Vec::new(),
+                register_names: HashMap::new(),
             },
             should_close: false,
             one_time: false,
@@ -167,6 +171,14 @@ impl TheMan {
                     for (_, channel) in self.state.voice_connected.iter_mut() {
                         channel.retain(|peer, _| *peer != peer_id);
                     }
+                }
+                Message::Gui(crate::logic::message::GuiMessage::Friends(friends)) => {
+                    for friend in friends.iter() {
+                        self.state
+                            .register_names
+                            .insert(friend.peer_id, friend.name.clone());
+                    }
+                    self.state.friends = friends;
                 }
                 _ => {}
             }
