@@ -54,62 +54,68 @@ impl Tab for TabVoiceChannel {
 
         ui.separator();
 
-        ui.horizontal(|ui| {
-            if let Some(peers) = state.voice_connected.get_mut(&self.name) {
-                let height = ui.available_height();
-                let width = ui.available_width();
-                let connected_width = width * 0.5;
-                let requests_width = width * 0.5;
+        ui.allocate_ui_with_layout(
+            ui.available_size(),
+            egui::Layout::left_to_right(egui::Align::LEFT),
+            |ui| {
+                if let Some(peers) = state.voice_connected.get_mut(&self.name) {
+                    let height = ui.available_height();
+                    let width = ui.available_width();
+                    let connected_width = width * 0.5;
+                    let requests_width = width * 0.5;
 
-                ui.allocate_ui(egui::Vec2::new(connected_width, height), |ui| {
-                    ui.vertical(|ui| {
-                        ui.vertical_centered(|ui| ui.label("Connected:"));
-                        ui.separator();
-                        egui::ScrollArea::both()
-                            .id_source("Connected: ")
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                for (peer, connected) in
-                                    peers.iter_mut().filter(|(_, state)| **state)
-                                {
-                                    if ui.selectable_label(false, peer.to_string()).clicked() {
-                                        state.sender.try_send(Message::Voice(
-                                            VoiceMessage::Refuse(self.name.clone(), *peer),
-                                        ));
-                                        *connected = false;
+                    ui.allocate_ui_with_layout(
+                        egui::Vec2::new(connected_width, height),
+                        egui::Layout::top_down(egui::Align::TOP),
+                        |ui| {
+                            ui.vertical_centered(|ui| ui.label("Connected:"));
+                            ui.separator();
+                            egui::ScrollArea::both()
+                                .id_source("Connected: ")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    for (peer, connected) in
+                                        peers.iter_mut().filter(|(_, state)| **state)
+                                    {
+                                        if ui.selectable_label(false, peer.to_string()).clicked() {
+                                            state.sender.try_send(Message::Voice(
+                                                VoiceMessage::Refuse(self.name.clone(), *peer),
+                                            ));
+                                            *connected = false;
+                                        }
                                     }
-                                }
-                            });
-                    });
-                });
+                                });
+                        },
+                    );
 
-                ui.separator();
+                    ui.separator();
 
-                ui.allocate_ui(egui::Vec2::new(requests_width, height), |ui| {
-                    ui.vertical(|ui| {
-                        ui.vertical_centered(|ui| {
-                            ui.label("Requests:");
-                        });
-                        ui.separator();
-                        egui::ScrollArea::both()
-                            .id_source("Requests: ")
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                for (peer, connected) in
-                                    peers.iter_mut().filter(|(_, state)| !**state)
-                                {
-                                    if ui.selectable_label(false, peer.to_string()).clicked() {
-                                        state.sender.try_send(Message::Voice(
-                                            VoiceMessage::Accept(self.name.clone(), *peer),
-                                        ));
-                                        *connected = true;
+                    ui.allocate_ui_with_layout(
+                        egui::Vec2::new(requests_width, height),
+                        egui::Layout::top_down(egui::Align::TOP),
+                        |ui| {
+                            ui.vertical_centered(|ui| ui.label("Requests:"));
+                            ui.separator();
+                            egui::ScrollArea::both()
+                                .id_source("Requests: ")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    for (peer, connected) in
+                                        peers.iter_mut().filter(|(_, state)| !**state)
+                                    {
+                                        if ui.selectable_label(false, peer.to_string()).clicked() {
+                                            state.sender.try_send(Message::Voice(
+                                                VoiceMessage::Accept(self.name.clone(), *peer),
+                                            ));
+                                            *connected = true;
+                                        }
                                     }
-                                }
-                            });
-                    });
-                });
-            }
-        });
+                                });
+                        },
+                    );
+                }
+            },
+        );
         None
     }
 

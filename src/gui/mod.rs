@@ -177,6 +177,7 @@ impl TheMan {
 impl eframe::App for TheMan {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.one_time {
+            // ctx.set_debug_on_hover(true);
             self.one_time = true;
         }
 
