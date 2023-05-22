@@ -314,19 +314,32 @@ impl Audio {
                 ));
             }
             Message::Audio(AudioMessage::OutputData { id, mut data }) => {
-                if let Some(stream) = self.streams.get(id) {
-                    stream.write().unwrap().buffer.append(&mut data);
-                } else {
-                    eprintln!("Invalid stream: {id}")
+                for stream in self.streams.iter() {
+                    if stream.read().unwrap().id == id {
+                        stream.write().unwrap().buffer.append(&mut data);
+                        break;
+                    }
                 }
             }
             Message::Audio(AudioMessage::DestroyInputChannel { id }) => {
-                self.streams
-                    .retain(|stream| stream.read().unwrap().id != id);
+                self.streams.retain(|stream| {
+                    if stream.read().unwrap().id != id {
+                        false
+                    } else {
+                        stream.write().unwrap().stream.take();
+                        true
+                    }
+                });
             }
             Message::Audio(AudioMessage::DestroyOuputChannel { id }) => {
-                self.streams
-                    .retain(|stream| stream.read().unwrap().id != id);
+                self.streams.retain(|stream| {
+                    if stream.read().unwrap().id != id {
+                        false
+                    } else {
+                        stream.write().unwrap().stream.take();
+                        true
+                    }
+                });
             }
             _ => {}
         }

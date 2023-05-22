@@ -22,6 +22,7 @@ pub struct TheManLogic {
     pub registration_query: Option<(libp2p::kad::QueryId, Instant)>,
     pub registration_step_1_query: Option<(libp2p::kad::QueryId, Vec<u8>)>,
     pub egui_ctx: eframe::egui::Context,
+    pub audio_counter: usize,
 }
 
 impl TheManLogic {
@@ -45,6 +46,7 @@ impl TheManLogic {
             audio_sender,
             audio_receiver,
             bootstraping: true,
+            audio_counter: 0,
         }
     }
 
@@ -62,13 +64,8 @@ impl TheManLogic {
             }))
             .await;
 
-        let _ = self
-            .audio_sender
-            .send(Message::Audio(message::AudioMessage::CreateOutputChannel {
-                id: 1,
-                codec: "opus".into(),
-            }))
-            .await;
+        self.audio_counter += 1;
+
         loop {
             if let Some(account) = &mut self.state.account {
                 let renew_account = tokio::time::Instant::from_std(account.expires);

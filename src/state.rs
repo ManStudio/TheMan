@@ -52,6 +52,7 @@ pub struct ActiveAccount {
     pub swarm: Swarm<TheManBehaviour>,
     pub friends: Vec<Friend>,
     pub expires: Instant,
+    pub voice_channels: HashMap<String, HashMap<PeerId, usize>>,
 }
 
 pub struct TheManState {
@@ -142,9 +143,7 @@ impl TheManState {
 
         let ping = { libp2p::ping::Behaviour::new(libp2p::ping::Config::new()) };
 
-        let mut the_man = { the_man::network::TheManBehaviour::new(peer_id) };
-
-        the_man.connect("voice".into());
+        let the_man = { the_man::network::TheManBehaviour::new(peer_id) };
 
         let transport = libp2p::tokio_development_transport(keypair.clone()).unwrap();
         let swarm = SwarmBuilder::with_tokio_executor(
@@ -178,6 +177,7 @@ impl TheManState {
             expires: instant,
             friends: vec![],
             index: account_index,
+            voice_channels: HashMap::new(),
         };
 
         self.account = Some(account)

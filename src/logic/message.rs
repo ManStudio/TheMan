@@ -167,6 +167,16 @@ impl TheManLogic {
                 self.egui_ctx.request_repaint()
             }
             Message::SetAccount(account_index) => {
+                // Cleanup channels!
+                if let Some(account) = &mut self.state.account {
+                    for (_, hash) in account.voice_channels.iter() {
+                        for (_, channel_id) in hash {
+                            self.audio_sender.try_send(Message::Audio(
+                                AudioMessage::DestroyOuputChannel { id: *channel_id },
+                            ));
+                        }
+                    }
+                }
                 self.state.set_account(account_index);
 
                 if let Some(account) = &mut self.state.account {
@@ -262,6 +272,13 @@ impl TheManLogic {
             }
             Message::Voice(VoiceMessage::Disconnect(channel)) => {
                 if let Some(account) = &mut self.state.account {
+                    if let Some(channel) = account.voice_channels.remove(&channel) {
+                        for (_, id) in channel {
+                            let _ = self
+                                .audio_sender
+                                .try_send(Message::Audio(AudioMessage::DestroyOuputChannel { id }));
+                        }
+                    }
                     account.swarm.behaviour_mut().the_man.disconnect(channel);
                 }
             }
@@ -276,6 +293,13 @@ impl TheManLogic {
             }
             Message::Voice(VoiceMessage::Refuse(channel, peer_id)) => {
                 if let Some(account) = &mut self.state.account {
+                    if let Some(channel) = account.voice_channels.get_mut(&channel) {
+                        if let Some(id) = channel.remove(&peer_id) {
+                            let _ = self
+                                .audio_sender
+                                .try_send(Message::Audio(AudioMessage::DestroyOuputChannel { id }));
+                        }
+                    }
                     account
                         .swarm
                         .behaviour_mut()

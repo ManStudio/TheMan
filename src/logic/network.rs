@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use libp2p::swarm::SwarmEvent;
 
 use crate::state::{BehaviourEvent, PeerStatus};
@@ -196,8 +198,38 @@ impl TheManLogic {
                                     data,
                                     channel,
                                 } => {
+                                    let mut id = None;
+                                    if let Some(hash) = account.voice_channels.get(&channel) {
+                                        if let Some(tmp_id) = hash.get(&from) {
+                                            id = Some(*tmp_id);
+                                        }
+                                    }
+
+                                    let id = if let Some(id) = id {
+                                        id
+                                    } else {
+                                        let id = self.audio_counter;
+                                        self.audio_counter += 1;
+                                        let _ = self.audio_sender.try_send(Message::Audio(
+                                            super::message::AudioMessage::CreateOutputChannel {
+                                                id,
+                                                codec: "opus".into(),
+                                            },
+                                        ));
+                                        if let Some(channel) =
+                                            account.voice_channels.get_mut(&channel)
+                                        {
+                                            channel.insert(from, id);
+                                        } else {
+                                            let mut hash = HashMap::new();
+                                            hash.insert(from, id);
+                                            account.voice_channels.insert(channel.clone(), hash);
+                                        }
+                                        id
+                                    };
+
                                     let _ = self.audio_sender.try_send(Message::Audio(
-                                        super::message::AudioMessage::OutputData { id: 1, data },
+                                        super::message::AudioMessage::OutputData { id, data },
                                     ));
                                 }
                                 the_man::network::event::BehaviourEvent::Request {
@@ -217,7 +249,13 @@ impl TheManLogic {
                                     println!(
                                         "Voice: Disconnect:  channel: {channel}, from: {from}"
                                     );
-                                    self.sender.try_send(Message::Voice(
+                                    if let Some(channel) = account.voice_channels.get_mut(&channel)
+                                    {
+                                        if let Some(id) = channel.remove(&from) {
+                                            let _ = self.audio_sender.try_send(Message::Audio(crate::logic::message::AudioMessage::DestroyOuputChannel { id }));
+                                        }
+                                    }
+                                    let _ = self.sender.try_send(Message::Voice(
                                         crate::logic::message::VoiceMessage::UnRequest(
                                             channel, from,
                                         ),
@@ -227,8 +265,12 @@ impl TheManLogic {
                                 the_man::network::event::BehaviourEvent::VoiceDisconnected {
                                     from,
                                 } => {
-                                    println!("VoiceDisconnected: from: {from}");
-                                    self.sender.try_send(Message::Voice(
+                                    for (_, hash) in account.voice_channels.iter_mut() {
+                                        if let Some(id) = hash.remove(&from) {
+                                            let _ = self.audio_sender.try_send(Message::Audio(crate::logic::message::AudioMessage::DestroyOuputChannel { id }));
+                                        }
+                                    }
+                                    let _ = self.sender.try_send(Message::Voice(
                                         crate::logic::message::VoiceMessage::Disconnected(from),
                                     ));
                                     self.egui_ctx.request_repaint();
