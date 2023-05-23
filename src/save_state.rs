@@ -11,6 +11,13 @@ pub struct Friend {
     pub name: String,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum ChannelType {
+    #[default]
+    Message,
+    Voice,
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Account {
     pub name: String,
@@ -19,6 +26,8 @@ pub struct Account {
     pub friends: Vec<Friend>,
     #[serde(default = "default_expires")]
     pub expires: DateTime<Utc>,
+    #[serde(default)]
+    pub channels: Vec<(String, ChannelType)>,
 }
 
 fn default_expires() -> DateTime<Utc> {

@@ -1,18 +1,12 @@
 use eframe::egui;
 
-use super::Tab;
+use crate::save_state::ChannelType;
 
-#[derive(Clone, Default, PartialEq)]
-pub enum ChannelType {
-    #[default]
-    Message,
-    Voice,
-}
+use super::Tab;
 
 #[derive(Default)]
 pub struct TabChannels {
     id: usize,
-    channels: Vec<(String, ChannelType)>,
 
     channel_type: ChannelType,
     channel_name: String,
@@ -26,12 +20,12 @@ impl Tab for TabChannels {
     fn update(
         &mut self,
         ui: &mut eframe::egui::Ui,
-        _state: &mut crate::gui::TheManGuiState,
+        state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
         let mut script = String::new();
 
         ui.label("Channels");
-        for channel in self.channels.iter() {
+        for channel in state.channels.iter() {
             match &channel.1 {
                 ChannelType::Message => {
                     if ui
@@ -69,7 +63,8 @@ impl Tab for TabChannels {
         });
 
         if ui.button("Add").clicked() {
-            self.channels
+            state
+                .channels
                 .push((self.channel_name.clone(), self.channel_type.clone()));
         }
 

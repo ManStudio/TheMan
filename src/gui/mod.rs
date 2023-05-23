@@ -10,7 +10,7 @@ use libp2p::{
 
 use crate::{
     logic::message::Message,
-    save_state::{Account, Friend, TheManSaveState},
+    save_state::{Account, ChannelType, Friend, TheManSaveState},
     state::PeerStatus,
 };
 
@@ -24,6 +24,7 @@ pub struct TheManGuiState {
     pub peers: HashMap<PeerId, PeerStatus>,
     pub peer_id: Option<PeerId>,
     pub name: Option<String>,
+    pub account_id: Option<usize>,
     pub receiver: tokio::sync::mpsc::Receiver<Message>,
     pub sender: tokio::sync::mpsc::Sender<Message>,
     pub adresses: Vec<AddressRecord>,
@@ -37,6 +38,7 @@ pub struct TheManGuiState {
     pub friends: Vec<Friend>,
     pub register_names: HashMap<PeerId, String>,
     pub bootstraping: bool,
+    pub channels: Vec<(String, ChannelType)>,
 }
 
 impl TheManGuiState {
@@ -95,6 +97,8 @@ impl TheMan {
                 voice_connected: HashMap::new(),
                 friends: Vec::new(),
                 register_names: HashMap::new(),
+                channels: vec![],
+                account_id: None,
             },
             should_close: false,
             one_time: false,
@@ -116,8 +120,10 @@ impl TheMan {
                 Message::AccountActivate(account_index, peer_id) => {
                     if let Some(account) = self.state.accounts.get(account_index) {
                         self.state.name = Some(account.name.clone());
+                        self.state.channels = account.channels.clone();
                     }
-                    self.state.peer_id = Some(peer_id)
+                    self.state.peer_id = Some(peer_id);
+                    self.state.account_id = Some(account_index)
                 }
                 Message::Accounts(accounts) => self.state.accounts = accounts,
                 Message::Adresses(adresses) => self.state.adresses = adresses,
@@ -200,6 +206,17 @@ impl eframe::App for TheMan {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        if let Some(account_id) = self.state.account_id {
+            if let Some(account) = self.state.accounts.get_mut(account_id) {
+                account.channels = self.state.channels.clone();
+            }
+        }
+
+        let _ = self
+            .state
+            .sender
+            .try_send(Message::UpdateAccounts(self.state.accounts.clone()));
+
         self.state.sender.try_send(Message::Save).unwrap();
         let save_state = loop {
             if let Some(save) = &self.state.save {

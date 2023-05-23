@@ -62,6 +62,7 @@ impl Tab for TabAccounts {
                         private: Keypair::generate_ed25519().to_protobuf_encoding().unwrap(),
                         friends: vec![],
                         expires: Utc::now(),
+                        channels: vec![],
                     });
                     to_send.push(crate::logic::message::Message::UpdateAccounts(
                         state.accounts.clone(),
