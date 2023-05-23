@@ -175,7 +175,7 @@ impl TheManState {
             keypair,
             swarm,
             expires: instant,
-            friends: vec![],
+            friends: account.friends.clone(),
             index: account_index,
             voice_channels: HashMap::new(),
         };

@@ -112,7 +112,8 @@ impl TheManLogic {
                                 + chrono::Duration::from_std(
                                     account.expires.duration_since(Instant::now()),
                                 )
-                                .unwrap_or_else(|_| chrono::Duration::zero())
+                                .unwrap_or_else(|_| chrono::Duration::zero());
+                            acc.friends = account.friends.clone();
                         }
 
                         TheManSaveState {
