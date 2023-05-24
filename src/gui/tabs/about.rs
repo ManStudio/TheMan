@@ -1,3 +1,5 @@
+use eframe::egui::output::OpenUrl;
+
 use super::Tab;
 
 #[derive(Default)]
@@ -33,12 +35,27 @@ impl Tab for TabAbout {
         ui.label("Channels will be saved on account");
         ui.separator();
         ui.label("Credits:");
+        ui.label("This hole project is writen in Rust");
         ui.label("This project is using Opus, Libp2p, egui, eframe, cpal");
         ui.label("The Libp2p is used for the hole network stack!");
         ui.label("Kademila is used for peer discovery");
         ui.label("cpal is used for the audio library");
         ui.label("eframe and egui for the window and the GUI");
         ui.label("Opus is used of encoding and decoding for the audio");
+        ui.separator();
+        ui.label("Links");
+        if ui.button("Github").clicked() {
+            ui.output_mut(|out| {
+                out.open_url = Some(OpenUrl::new_tab(
+                    "https://github.com/ManStudio/TheMan".to_string(),
+                ))
+            });
+        }
+        if ui.button("Rust").clicked() {
+            ui.output_mut(|out| {
+                out.open_url = Some(OpenUrl::new_tab("https://www.rust-lang.org/".to_string()))
+            });
+        }
         None
     }
 
