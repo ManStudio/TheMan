@@ -1,5 +1,6 @@
 use eframe::egui;
 
+mod about;
 mod account;
 mod accounts;
 mod boot_nodes;
@@ -14,6 +15,7 @@ mod querys;
 mod swarm_status;
 mod voice_channel;
 
+pub use about::TabAbout;
 pub use account::TabAccount;
 pub use accounts::TabAccounts;
 pub use boot_nodes::TabBootNodes;
@@ -139,7 +141,7 @@ impl TabManager {
 
     pub fn ui(&mut self, ctx: &egui::Context, state: &mut TheManGuiState) {
         if self.tabs.is_empty() {
-            self.open(0, None)
+            self.open(13, None)
         }
 
         let mut tab_viewer = TabViewer {
