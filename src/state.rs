@@ -15,33 +15,23 @@ use libp2p::{
 
 use crate::save_state::{Account, Friend};
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct PeerStatus {
     pub info: Option<Info>,
-    pub ping: Option<libp2p::ping::Result>,
+    pub ping: Option<Result<PingOk, PingError>>,
 }
 
-impl Clone for PeerStatus {
-    fn clone(&self) -> Self {
-        use libp2p::ping::*;
-        Self {
-            info: self.info.clone(),
-            ping: match &self.ping {
-                Some(res) => match res {
-                    Ok(ok) => match ok {
-                        Success::Pong => Some(Result::Ok(Success::Pong)),
-                        Success::Ping { rtt } => Some(Result::Ok(Success::Ping { rtt: *rtt })),
-                    },
-                    Err(err) => match err {
-                        Failure::Timeout => Some(Result::Err(Failure::Timeout)),
-                        Failure::Unsupported => Some(Result::Err(Failure::Unsupported)),
-                        Failure::Other { .. } => Some(Result::Err(Failure::Unsupported)),
-                    },
-                },
-                None => None,
-            },
-        }
-    }
+#[derive(Clone, Debug)]
+pub enum PingOk {
+    Pong,
+    Ping(std::time::Instant, std::time::Duration),
+}
+
+#[derive(Clone, Debug)]
+pub enum PingError {
+    Timeout,
+    Unsupported,
+    Other(String),
 }
 
 pub struct ActiveAccount {

@@ -21,6 +21,7 @@ impl Tab for TabPeers {
         ui: &mut eframe::egui::Ui,
         state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
+        let mut message = None;
         let row_height = ui.text_style_height(&egui::TextStyle::Body);
         let peers = state
             .peers
@@ -41,14 +42,17 @@ impl Tab for TabPeers {
             for i in range {
                 if let Some(peer) = peers.get(i) {
                     ui.horizontal(|ui| {
-                        ui.label(format!("PeerId: {}", peer.0));
+                        let res = ui.selectable_label(false, format!("PeerId: {}", peer.0));
+                        if res.clicked() {
+                            message = Some(format!("o14,{}", peer.0));
+                        }
                         ui.label(format!("Ping: {:?}", peer.1.ping));
                         ui.label(format!("Info: {:?}", peer.1.info));
                     });
                 }
             }
         });
-        None
+        message
     }
 
     fn clone_box(&self) -> Box<dyn Tab> {

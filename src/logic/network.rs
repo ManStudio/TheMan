@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use libp2p::swarm::SwarmEvent;
 
-use crate::state::{BehaviourEvent, PeerStatus};
+use crate::state::{BehaviourEvent, PeerStatus, PingError};
 
 use super::{message::Message, TheManLogic};
 
@@ -185,7 +185,27 @@ impl TheManLogic {
                     }
                     BehaviourEvent::Ping(event) => {
                         if let Some(peer) = self.state.peers.get_mut(&event.peer) {
-                            peer.ping = Some(event.result);
+                            let ping = match event.result {
+                                Ok(ping) => match ping {
+                                    libp2p::ping::Success::Pong => Ok(crate::state::PingOk::Pong),
+                                    libp2p::ping::Success::Ping { rtt } => {
+                                        Ok(crate::state::PingOk::Ping(
+                                            std::time::Instant::now() - rtt,
+                                            rtt,
+                                        ))
+                                    }
+                                },
+                                Err(err) => match err {
+                                    libp2p::ping::Failure::Timeout => Err(PingError::Timeout),
+                                    libp2p::ping::Failure::Unsupported => {
+                                        Err(crate::state::PingError::Unsupported)
+                                    }
+                                    libp2p::ping::Failure::Other { error } => {
+                                        Err(crate::state::PingError::Other(error.to_string()))
+                                    }
+                                },
+                            };
+                            peer.ping = Some(ping);
                         }
                         self.egui_ctx.request_repaint();
                     }
