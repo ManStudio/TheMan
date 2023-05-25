@@ -22,6 +22,7 @@ impl Tab for TabVoiceChannel {
         ui: &mut eframe::egui::Ui,
         state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
+        let mut message = None;
         if self.name.is_empty() {
             ui.label("VoiceChannel has not Topic");
             return None;
@@ -83,11 +84,15 @@ impl Tab for TabVoiceChannel {
                                             } else {
                                                 format!("PeerId: {peer}")
                                             };
-                                        if ui.selectable_label(false, name).clicked() {
+                                        let res = ui.selectable_label(false, name);
+                                        if res.clicked() {
                                             let _ = state.sender.try_send(Message::Voice(
                                                 VoiceMessage::Refuse(self.name.clone(), *peer),
                                             ));
                                             *connected = false;
+                                        }
+                                        if res.secondary_clicked() {
+                                            message = Some(format!("o14,{peer}"))
                                         }
                                     }
                                 });
@@ -116,11 +121,16 @@ impl Tab for TabVoiceChannel {
                                                 format!("PeerId: {peer}")
                                             };
 
-                                        if ui.selectable_label(false, name).clicked() {
+                                        let res = ui.selectable_label(false, name);
+                                        if res.clicked() {
                                             let _ = state.sender.try_send(Message::Voice(
                                                 VoiceMessage::Accept(self.name.clone(), *peer),
                                             ));
                                             *connected = true;
+                                        }
+
+                                        if res.secondary_clicked() {
+                                            message = Some(format!("o14,{peer}"))
                                         }
                                     }
                                 });
@@ -129,7 +139,7 @@ impl Tab for TabVoiceChannel {
                 }
             },
         );
-        None
+        message
     }
 
     fn recive(&mut self, message: String) {
