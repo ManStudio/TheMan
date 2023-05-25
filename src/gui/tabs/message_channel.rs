@@ -24,6 +24,8 @@ impl Tab for TabMessageChannel {
         ui: &mut eframe::egui::Ui,
         state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
+        let mut message = None;
+
         let Some(topic) = self.topic.clone() else {
             ui.label("This Message Channel Has Not Topic");
             return None};
@@ -153,13 +155,15 @@ impl Tab for TabMessageChannel {
                         |ui, range| {
                             for peer in &peers[range] {
                                 if let Some(name) = state.register_names.get(&peer) {
-                                    ui.label(name);
+                                    if ui.selectable_label(false, name).clicked() {
+                                        message = Some(format!("o14,{peer}"));
+                                    }
                                 } else {
                                     if ui
                                         .selectable_label(false, format!("PeerId: {}", peer))
                                         .clicked()
                                     {
-                                        ui.output_mut(|out| out.copied_text = format!("{}", peer));
+                                        message = Some(format!("o14,{peer}"));
                                     }
                                 }
                                 ui.separator();
@@ -193,7 +197,7 @@ impl Tab for TabMessageChannel {
                 }
             }
         });
-        None
+        message
     }
 
     fn recive(&mut self, message: String) {
