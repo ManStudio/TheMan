@@ -119,29 +119,28 @@ impl Tab for TabPeer {
             } else {
                 ui.label("No ping!");
             }
-
-            ui.separator();
-            if !is_friend {
-                ui.label("Add as friend!");
-                ui.horizontal(|ui| {
-                    ui.text_edit_singleline(&mut self.name);
-                    if ui.button("Add").clicked() {
-                        state.friends.push(crate::save_state::Friend {
-                            peer_id: peer_id.clone(),
-                            name: self.name.clone(),
-                        });
-                        let _ = state.sender.try_send(crate::logic::message::Message::Gui(
-                            crate::logic::message::GuiMessage::Friends(state.friends.clone()),
-                        ));
-                    }
-                });
-            } else {
-                if ui.button("Remove friend").clicked() {
-                    state.friends.retain(|friend| friend.peer_id != *peer_id);
+        }
+        ui.separator();
+        if !is_friend {
+            ui.label("Add as friend!");
+            ui.horizontal(|ui| {
+                ui.text_edit_singleline(&mut self.name);
+                if ui.button("Add").clicked() {
+                    state.friends.push(crate::save_state::Friend {
+                        peer_id: peer_id.clone(),
+                        name: self.name.clone(),
+                    });
                     let _ = state.sender.try_send(crate::logic::message::Message::Gui(
                         crate::logic::message::GuiMessage::Friends(state.friends.clone()),
                     ));
                 }
+            });
+        } else {
+            if ui.button("Remove friend").clicked() {
+                state.friends.retain(|friend| friend.peer_id != *peer_id);
+                let _ = state.sender.try_send(crate::logic::message::Message::Gui(
+                    crate::logic::message::GuiMessage::Friends(state.friends.clone()),
+                ));
             }
         }
         None
