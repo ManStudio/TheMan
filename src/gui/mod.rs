@@ -74,6 +74,7 @@ impl TheMan {
         tab_manager.register::<TabVoiceChannel>(); // 11
         tab_manager.register::<TabFriends>(); // 12
         tab_manager.register::<TabAbout>(); //13
+        tab_manager.register::<TabPeer>(); // 14
 
         tab_manager.execute("o0;o1;o2;o3;o4;o13");
 
