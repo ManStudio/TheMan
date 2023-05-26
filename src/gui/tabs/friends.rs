@@ -20,6 +20,7 @@ impl Tab for TabFriends {
         ui: &mut eframe::egui::Ui,
         state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
+        let mut message = None;
         if ui.button("Refresh").clicked() {
             let _ = state.sender.try_send(crate::logic::message::Message::Gui(
                 crate::logic::message::GuiMessage::RefreshFriends,
@@ -51,19 +52,24 @@ impl Tab for TabFriends {
 
         egui::ScrollArea::both().show(ui, |ui| {
             for friend in state.friends.iter() {
-                let res = ui.selectable_label(
-                    false,
-                    format!(
-                        "PeerId: {}, Online: {}, Name: {}",
-                        friend.peer_id,
-                        state.peers.contains_key(&friend.peer_id),
-                        friend.name
-                    ),
-                );
+                if ui
+                    .selectable_label(
+                        false,
+                        format!(
+                            "PeerId: {}, Online: {}, Name: {}",
+                            friend.peer_id,
+                            state.peers.contains_key(&friend.peer_id),
+                            friend.name
+                        ),
+                    )
+                    .clicked()
+                {
+                    message = Some(format!("o14,{}", friend.peer_id))
+                }
             }
         });
 
-        None
+        message
     }
 
     fn recive(&mut self, message: String) {}
