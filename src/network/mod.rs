@@ -1,8 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use libp2p::{
-    core::upgrade::ReadyUpgrade,
-    swarm::{ConnectionHandler, NetworkBehaviour, SubstreamProtocol, THandlerInEvent, ToSwarm},
+    swarm::{NetworkBehaviour, THandlerInEvent, ToSwarm},
     PeerId,
 };
 
@@ -208,7 +207,7 @@ impl NetworkBehaviour for TheManBehaviour {
         local_addr: &libp2p::Multiaddr,
         remote_addr: &libp2p::Multiaddr,
     ) -> Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
-        Connection::new(self.peer_id, peer, self.connected.clone())
+        Connection::new(self.connected.clone())
     }
 
     fn handle_established_outbound_connection(
@@ -218,7 +217,7 @@ impl NetworkBehaviour for TheManBehaviour {
         addr: &libp2p::Multiaddr,
         role_override: libp2p::core::Endpoint,
     ) -> Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
-        Connection::new(self.peer_id, peer, self.connected.clone())
+        Connection::new(self.connected.clone())
     }
 }
 

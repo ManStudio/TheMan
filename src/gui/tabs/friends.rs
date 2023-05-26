@@ -1,5 +1,5 @@
 use eframe::egui;
-use libp2p::{multihash::Multihash, PeerId};
+use libp2p::PeerId;
 
 use super::Tab;
 
@@ -72,7 +72,7 @@ impl Tab for TabFriends {
         message
     }
 
-    fn recive(&mut self, message: String) {}
+    fn recive(&mut self, _message: String) {}
 
     fn clone_box(&self) -> Box<dyn Tab> {
         Box::<Self>::default()

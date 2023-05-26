@@ -5,7 +5,6 @@ use libp2p::{
     core::{muxing::SubstreamBox, upgrade::ReadyUpgrade, Negotiated},
     futures::{future::BoxFuture, AsyncReadExt, AsyncWriteExt, FutureExt},
     swarm::{ConnectionHandler, ConnectionHandlerEvent, SubstreamProtocol},
-    PeerId,
 };
 
 use super::{packet::Packet, Failure, TheManBehaviour};
@@ -14,8 +13,6 @@ pub struct Connection {
     init: bool,
     inbound: Stage,
     outbound: Stage,
-    peer_id: PeerId,
-    local_peer_id: PeerId,
     connected: bool,
     initial_connections: HashSet<String>,
     events: VecDeque<InputEvent>,
@@ -25,16 +22,12 @@ pub struct Connection {
 
 impl Connection {
     pub fn new(
-        local_peer_id: PeerId,
-        peer_id: PeerId,
         initial_connected: HashSet<String>,
     ) -> Result<libp2p::swarm::THandler<TheManBehaviour>, libp2p::swarm::ConnectionDenied> {
         Ok(Self {
             init: false,
             inbound: Stage::None,
             outbound: Stage::None,
-            peer_id,
-            local_peer_id,
             connected: false,
             initial_connections: initial_connected,
             events: VecDeque::new(),

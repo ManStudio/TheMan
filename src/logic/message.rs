@@ -323,7 +323,8 @@ impl TheManLogic {
             Message::Gui(GuiMessage::Friends(friends)) => {
                 if let Some(account) = &mut self.state.account {
                     account.friends = friends.clone();
-                    self.sender
+                    let _ = self
+                        .sender
                         .try_send(Message::Gui(GuiMessage::Friends(friends)));
                 }
             }

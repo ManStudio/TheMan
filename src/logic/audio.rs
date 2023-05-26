@@ -12,7 +12,7 @@ impl TheManLogic {
             Message::Audio(AudioMessage::ResCreateOutputChannel(id, error)) => {
                 println!("Audio created output: Id: {id}, Error: {error}");
             }
-            Message::Audio(AudioMessage::InputData { id, data }) => {
+            Message::Audio(AudioMessage::InputData { data, .. }) => {
                 if let Some(account) = &mut self.state.account {
                     account
                         .swarm
@@ -20,12 +20,6 @@ impl TheManLogic {
                         .the_man
                         .audio_packet("opus".into(), data)
                 }
-                // let _ = self
-                //     .audio_sender
-                //     .try_send(Message::Audio(AudioMessage::OutputData {
-                //         id: 1,
-                //         data: data,
-                //     }));
             }
             Message::Audio(AudioMessage::OutputError { id, error }) => {
                 eprintln!("Logic: AudioOutput id: {id}, has error: {error}");

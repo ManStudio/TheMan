@@ -214,7 +214,7 @@ impl Audio {
                                 None,
                             )
                             .unwrap();
-                        cpal_stream.play();
+                        let _ = cpal_stream.play();
                         stream.write().unwrap().stream = Some(cpal_stream);
                         self.streams.push(stream);
                     } else {
@@ -300,7 +300,7 @@ impl Audio {
                             )
                             .unwrap();
 
-                        cpal_stream.play();
+                        let _ = cpal_stream.play();
                         stream.write().unwrap().stream = Some(cpal_stream);
                         self.streams.push(stream);
                     } else {

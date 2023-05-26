@@ -15,7 +15,7 @@ impl Tab for TabAbout {
     fn update(
         &mut self,
         ui: &mut eframe::egui::Ui,
-        state: &mut crate::gui::TheManGuiState,
+        _state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
         ui.label("TheMan");
         ui.separator();
@@ -59,7 +59,7 @@ impl Tab for TabAbout {
         None
     }
 
-    fn recive(&mut self, message: String) {}
+    fn recive(&mut self, _message: String) {}
 
     fn clone_box(&self) -> Box<dyn Tab> {
         Box::<Self>::default()
