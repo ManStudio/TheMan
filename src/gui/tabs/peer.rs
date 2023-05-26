@@ -25,7 +25,7 @@ impl Tab for TabPeer {
         let Some(peer_id) = &self.peer_id else{ui.label("No peer selected!");return None};
         let mut is_friend = false;
         if let Some(name) = state.register_names.get(peer_id) {
-            ui.label("Saved name: {name}");
+            ui.label(format!("Saved name: {name}"));
             is_friend = true;
         }
         if ui
