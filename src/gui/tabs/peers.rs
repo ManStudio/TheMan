@@ -38,6 +38,7 @@ impl Tab for TabPeers {
                 let _ = state.sender.try_send(Message::GetBootNodes);
             }
         });
+
         egui::ScrollArea::both().show_rows(ui, row_height, peers.len(), |ui, range| {
             for i in range {
                 if let Some(peer) = peers.get(i) {

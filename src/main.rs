@@ -87,6 +87,8 @@ async fn main() {
             event_loop_builder: None,
             shader_version: None,
             centered: true,
+            active: true,
+            app_id: Some("theman".to_string()),
         },
         Box::new(|creator| {
             let state: Option<TheManSaveState> =
@@ -125,8 +127,9 @@ async fn main() {
                 ))
                 .tweak(eframe::egui::FontTweak {
                     scale: 1.0,
-                    y_offset_factor: -0.2, // move it up
+                    y_offset_factor: -0.2,
                     y_offset: 0.0,
+                    baseline_offset_factor: 0.0,
                 }),
             );
 
