@@ -4432,13 +4432,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
 
 [[package]]
-name = "opus"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6526409b274a7e98e55ff59d96aafd38e6cd34d46b7dbbc32ce126dffcd75e8e"
+name = "opus-kman"
+version = "0.1.0"
+source = "git+https://github.com/konkitoman/opus-kman#13d2e4a77835f3657f477473a10363f04a54b623"
 dependencies = [
  "audiopus_sys",
- "libc",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -5773,7 +5775,7 @@ dependencies = [
  "env_logger",
  "libp2p",
  "log",
- "opus",
+ "opus-kman",
  "ron",
  "serde",
  "tokio",
