@@ -12,7 +12,7 @@ use cpal::{
 use the_man::Atom;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use self::codec::{opus::CodecOpus, Codec};
+use self::codec::Codec;
 
 mod codec;
 
@@ -103,9 +103,6 @@ impl Audio {
         self.host = Some(cpal::default_host());
 
         self.try_get_default_devices();
-
-        self.codecs
-            .insert("opus".into(), Box::<CodecOpus>::default());
 
         println!("Audio thread started!");
 
