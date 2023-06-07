@@ -21,7 +21,6 @@ pub struct TheManLogic {
     pub subscribed: Vec<TopicHash>,
     pub registration_query: Option<(libp2p::kad::QueryId, Instant)>,
     pub registration_step_1_query: Option<(libp2p::kad::QueryId, Vec<u8>)>,
-    pub egui_ctx: eframe::egui::Context,
     pub audio_counter: usize,
 }
 
@@ -30,7 +29,6 @@ impl TheManLogic {
         state: TheManState,
         sender: Sender<Message>,
         reciver: Receiver<Message>,
-        egui_ctx: eframe::egui::Context,
         audio_sender: Sender<Message>,
         audio_receiver: Receiver<Message>,
     ) -> Self {
@@ -41,7 +39,6 @@ impl TheManLogic {
             bootstrap: None,
             subscribed: Vec::new(),
             registration_query: None,
-            egui_ctx,
             registration_step_1_query: None,
             audio_sender,
             audio_receiver,

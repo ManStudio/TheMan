@@ -117,7 +117,6 @@ impl TheManLogic {
                                         let _ = self.sender.try_send(
                                             Message::KademliaQueryProgress(id, result, stats, step),
                                         );
-                                        self.egui_ctx.request_repaint()
                                     }
                                 }
                             }
@@ -148,17 +147,14 @@ impl TheManLogic {
                         libp2p::gossipsub::Event::Message { message, .. } => {
                             let topic = message.topic.clone();
                             let _ = self.sender.try_send(Message::NewMessage(topic, message));
-                            self.egui_ctx.request_repaint();
                         }
                         libp2p::gossipsub::Event::Subscribed { peer_id, topic } => {
                             let _ = self.sender.try_send(Message::NewSubscribed(peer_id, topic));
-                            self.egui_ctx.request_repaint();
                         }
                         libp2p::gossipsub::Event::Unsubscribed { peer_id, topic } => {
                             let _ = self
                                 .sender
                                 .try_send(Message::DestroySubscriber(peer_id, topic));
-                            self.egui_ctx.request_repaint();
                         }
                         libp2p::gossipsub::Event::GossipsubNotSupported { .. } => {}
                     },
@@ -207,7 +203,6 @@ impl TheManLogic {
                             };
                             peer.ping = Some(ping);
                         }
-                        self.egui_ctx.request_repaint();
                     }
                     BehaviourEvent::TheMan(event) => {
                         if let Some(account) = &mut self.state.account {
@@ -260,7 +255,6 @@ impl TheManLogic {
                                     self.sender.try_send(Message::Voice(
                                         crate::logic::message::VoiceMessage::Request(channel, from),
                                     ));
-                                    self.egui_ctx.request_repaint();
                                 }
                                 the_man::network::event::BehaviourEvent::Disconnected {
                                     channel,
@@ -280,7 +274,6 @@ impl TheManLogic {
                                             channel, from,
                                         ),
                                     ));
-                                    self.egui_ctx.request_repaint();
                                 }
                                 the_man::network::event::BehaviourEvent::VoiceDisconnected {
                                     from,
@@ -293,7 +286,6 @@ impl TheManLogic {
                                     let _ = self.sender.try_send(Message::Voice(
                                         crate::logic::message::VoiceMessage::Disconnected(from),
                                     ));
-                                    self.egui_ctx.request_repaint();
                                 }
                                 the_man::network::event::BehaviourEvent::VoiceErrorConnection {
                                     to,
@@ -333,7 +325,6 @@ impl TheManLogic {
             let _ = self
                 .sender
                 .try_send(Message::SwarmStatus(account.swarm.network_info()));
-            self.egui_ctx.request_repaint()
         }
     }
 }

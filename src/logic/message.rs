@@ -124,7 +124,6 @@ impl TheManLogic {
                     let _ = self
                         .sender
                         .try_send(Message::SaveResponse(Some(save_state)));
-                    self.egui_ctx.request_repaint()
                 } else {
                     let _ = self.sender.try_send(Message::SaveResponse(None));
                 }
@@ -142,14 +141,12 @@ impl TheManLogic {
                         }
                     }
                     let _ = self.sender.try_send(Message::BootNodes(peers));
-                    self.egui_ctx.request_repaint()
                 }
             }
             Message::GetPeers => {
                 let _ = self
                     .sender
                     .try_send(Message::Peers(self.state.peers.clone()));
-                self.egui_ctx.request_repaint()
             }
             Message::BootstrapSet(value) => {
                 if let Some(account) = &mut self.state.account {
@@ -164,7 +161,6 @@ impl TheManLogic {
                 let _ = self
                     .sender
                     .try_send(Message::Accounts(self.state.accounts.clone()));
-                self.egui_ctx.request_repaint()
             }
             Message::SetAccount(account_index) => {
                 // Cleanup channels!
@@ -209,8 +205,6 @@ impl TheManLogic {
                             .kademlia
                             .get_closest_peers(friend.peer_id);
                     }
-
-                    self.egui_ctx.request_repaint()
                 }
             }
             Message::GetAdresses => {
@@ -222,7 +216,6 @@ impl TheManLogic {
                         .collect::<Vec<AddressRecord>>();
 
                     let _ = self.sender.try_send(Message::Adresses(adresses));
-                    self.egui_ctx.request_repaint()
                 }
             }
             Message::UpdateAccounts(accounts) => {
@@ -230,7 +223,6 @@ impl TheManLogic {
                 let _ = self
                     .sender
                     .try_send(Message::Accounts(self.state.accounts.clone()));
-                self.egui_ctx.request_repaint()
             }
             Message::SearchForKey(peer_id) => {
                 if let Some(account) = &mut self.state.account {
@@ -242,7 +234,6 @@ impl TheManLogic {
                     let _ = self
                         .sender
                         .try_send(Message::ResSearchForKey(peer_id, query_id));
-                    self.egui_ctx.request_repaint()
                 }
             }
             Message::SubscribeTopic(topic) => {
@@ -263,7 +254,6 @@ impl TheManLogic {
                         .behaviour_mut()
                         .gossipsub
                         .publish(topic, message);
-                    self.egui_ctx.request_repaint()
                 }
             }
             Message::SearchForRecord(key) => {

@@ -180,7 +180,6 @@ async fn main() {
                     state,
                     gui_logic_sender,
                     logic_gui_receiver,
-                    egui_ctx,
                     audio_logic_sender,
                     logic_audio_receiver,
                 );
