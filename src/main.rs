@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 use audio::Audio;
 use chrono::Utc;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use eframe::egui_wgpu::SurfaceErrorAction;
 use gui::TheMan;
 use libp2p::identity::Keypair;
 use logic::{message::Message, TheManLogic};
@@ -81,7 +80,7 @@ async fn main() {
             depth_buffer: 1,
             stencil_buffer: 1,
             hardware_acceleration: eframe::HardwareAcceleration::Preferred,
-            renderer: eframe::Renderer::Wgpu,
+            renderer: eframe::Renderer::Glow,
             follow_system_theme: true,
             default_theme: eframe::Theme::Dark,
             run_and_return: true,
@@ -90,20 +89,6 @@ async fn main() {
             centered: true,
             active: true,
             app_id: Some("theman".to_string()),
-            wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
-                supported_backends: eframe::wgpu::Backends::all(),
-                device_descriptor: Arc::new(|adapter| eframe::wgpu::DeviceDescriptor {
-                    label: Some("Device"),
-                    features: eframe::wgpu::Features::default(),
-                    limits: eframe::wgpu::Limits::default(),
-                }),
-                present_mode: eframe::wgpu::PresentMode::AutoVsync,
-                power_preference: eframe::wgpu::PowerPreference::HighPerformance,
-                on_surface_error: Arc::new(|error| {
-                    eprintln!("Surface error: {error}");
-                    SurfaceErrorAction::RecreateSurface
-                }),
-            },
         },
         Box::new(|creator| {
             let state: Option<TheManSaveState> =
