@@ -143,6 +143,7 @@ impl Tab for TabPeer {
                 ));
             }
         }
+        ui.spinner();
         None
     }
 

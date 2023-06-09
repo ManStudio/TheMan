@@ -37,6 +37,7 @@ impl Tab for TabPeers {
             if ui.button("Refresh").clicked() {
                 let _ = state.sender.try_send(Message::GetBootNodes);
             }
+            ui.spinner();
         });
 
         egui::ScrollArea::both().show_rows(ui, row_height, peers.len(), |ui, range| {

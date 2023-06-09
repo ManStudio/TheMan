@@ -21,6 +21,7 @@ impl Tab for TabQuerys {
 
         let len = state.kademlia_query_progress.len();
         let vec = state.kademlia_query_progress.iter().collect::<Vec<_>>();
+        ui.spinner();
         egui::ScrollArea::both().show_rows(
             ui,
             ui.text_style_height(&egui::TextStyle::Body),

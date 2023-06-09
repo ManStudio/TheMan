@@ -39,6 +39,7 @@ impl Tab for TabSwarmStatus {
                     state.bootstraping,
                 ));
             }
+            ui.spinner();
         }
         None
     }

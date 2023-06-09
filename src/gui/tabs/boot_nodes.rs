@@ -24,6 +24,7 @@ impl Tab for TabBootNodes {
                 let _ = state.sender.try_send(Message::GetBootNodes);
             }
             ui.label(format!("Nodes: {}", state.bootnodes.len()));
+            ui.spinner();
         });
         let row_height = ui.text_style_height(&egui::TextStyle::Body);
         egui::ScrollArea::both().show_rows(ui, row_height, state.bootnodes.len(), |ui, range| {

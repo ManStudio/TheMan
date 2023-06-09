@@ -129,6 +129,7 @@ impl Tab for TabMessageChannel {
                                     });
                                     ui.separator();
                                 }
+                                ui.spinner();
                             },
                         );
                 });
