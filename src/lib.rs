@@ -2,6 +2,18 @@ pub mod network;
 
 #[derive(Debug, Clone)]
 pub enum Atom {
+    SignedValues {
+        value: isize,
+        values: Vec<isize>,
+    },
+    UnSignedValues {
+        value: usize,
+        values: Vec<usize>,
+    },
+    StringValues {
+        value: String,
+        values: Vec<String>,
+    },
     Signed {
         value: isize,
         range: std::ops::Range<isize>,
@@ -24,6 +36,9 @@ impl Atom {
             Atom::UnSigned { value, range } => range.contains(value),
             Atom::Float { value, range } => range.contains(value),
             Atom::Text(_) => true,
+            Atom::SignedValues { value, values } => values.contains(value),
+            Atom::UnSignedValues { value, values } => values.contains(value),
+            Atom::StringValues { value, values } => values.contains(value),
         }
     }
 }

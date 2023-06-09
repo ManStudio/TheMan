@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{logic::message::AudioMessage, Message};
+use crate::{audio::codec::opus::CodecOpus, logic::message::AudioMessage, Message};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     InputCallbackInfo, OutputCallbackInfo, SizedSample, StreamError,
@@ -106,6 +106,9 @@ impl Audio {
 
         println!("Audio thread started!");
 
+        self.codecs
+            .insert("opus".into(), Box::<CodecOpus>::default());
+
         let mut read_errors = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
 
         loop {
@@ -158,7 +161,7 @@ impl Audio {
                             let mut channels = codec
                                 .get_setting("channels".into())
                                 .expect("Doze not have channels");
-                            if let Atom::UnSigned { value, .. } = &mut channels {
+                            if let Atom::UnSignedValues { value, .. } = &mut channels {
                                 *value = input_device.config.channels as usize;
                             }
                             codec.set_setting("channels".into(), channels);
@@ -166,7 +169,7 @@ impl Audio {
                             let mut sample_rate = codec
                                 .get_setting("sample_rate".into())
                                 .expect("Doze not have sample_rate");
-                            if let Atom::UnSigned { value, .. } = &mut sample_rate {
+                            if let Atom::UnSignedValues { value, .. } = &mut sample_rate {
                                 *value = input_device.config.sample_rate.0 as usize;
                             }
                             codec.set_setting("sample_rate".into(), sample_rate);
@@ -233,7 +236,7 @@ impl Audio {
                             let mut channels = codec
                                 .get_setting("channels".into())
                                 .expect("Doze not have channels");
-                            if let Atom::UnSigned { value, .. } = &mut channels {
+                            if let Atom::UnSignedValues { value, .. } = &mut channels {
                                 *value = output_device.config.channels as usize;
                             }
                             codec.set_setting("channels".into(), channels);
@@ -241,7 +244,7 @@ impl Audio {
                             let mut sample_rate = codec
                                 .get_setting("sample_rate".into())
                                 .expect("Doze not have sample_rate");
-                            if let Atom::UnSigned { value, .. } = &mut sample_rate {
+                            if let Atom::UnSignedValues { value, .. } = &mut sample_rate {
                                 *value = output_device.config.sample_rate.0 as usize;
                             }
                             codec.set_setting("sample_rate".into(), sample_rate);

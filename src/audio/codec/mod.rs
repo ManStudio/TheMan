@@ -1,5 +1,7 @@
 use the_man::Atom;
 
+pub mod opus;
+
 pub trait Codec: Sync + Send {
     fn name(&self) -> &str;
 
