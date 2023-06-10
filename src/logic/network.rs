@@ -209,7 +209,7 @@ impl TheManLogic {
                             match event {
                                 the_man::network::event::BehaviourEvent::VoicePacket {
                                     from,
-                                    codec,
+                                    codec: _,
                                     data,
                                     channel,
                                 } => {

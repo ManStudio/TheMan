@@ -221,11 +221,11 @@ impl ConnectionHandler for Connection {
                 }
             },
             Stage::RunningBase(mut future) => match future.poll_unpin(cx) {
-                std::task::Poll::Ready((mut stream, event, mut buffer)) => {
+                std::task::Poll::Ready((mut stream, _event, buffer)) => {
                     if let Some(event) = self.events.pop_front() {
                         self.outbound = Stage::RunningBase(
                             async {
-                                stream
+                                let _ = stream
                                     .write_all(
                                         &match event {
                                             InputEvent::VoicePacket {
@@ -316,12 +316,10 @@ pub enum Stage {
 
 impl Stage {
     pub fn initial(&self) -> bool {
-        match self {
-            Stage::Initial(_) => true,
-            Stage::RunningInitial(_) => true,
-            Stage::RunningBase(_) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Stage::Initial(_) | Stage::RunningInitial(_) | Stage::RunningBase(_)
+        )
     }
 
     pub fn take(&mut self) -> Stage {

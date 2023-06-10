@@ -143,7 +143,6 @@ async fn main() {
             );
 
             creator.egui_ctx.set_fonts(font_def);
-            let egui_ctx = creator.egui_ctx.clone();
 
             use tokio::sync::mpsc::channel;
             let (gui_logic_sender, gui_logic_receiver) = channel(255);
