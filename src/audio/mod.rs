@@ -202,7 +202,7 @@ impl Audio {
                                     str.write().unwrap().codec = Some(codec);
                                 },
                                 move |error| {
-                                    let id = str2.read().unwrap().id.clone();
+                                    let id = str2.read().unwrap().id;
                                     let _ = str2.read().unwrap().sender.try_send(Message::Audio(
                                         AudioMessage::InputError {
                                             id,
@@ -287,7 +287,7 @@ impl Audio {
                                     str.write().unwrap().codec = Some(codec);
                                 },
                                 move |error| {
-                                    let id = str2.read().unwrap().id.clone();
+                                    let id = str2.read().unwrap().id;
                                     let _ = str2.read().unwrap().sender.try_send(Message::Audio(
                                         AudioMessage::OutputError {
                                             id,

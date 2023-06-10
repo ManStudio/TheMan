@@ -1,4 +1,4 @@
-use audiopus::{coder::GenericCtl, Application, Channels, SampleRate};
+use audiopus::{Application, Channels, SampleRate};
 use bytes_kman::TBytes;
 use the_man::Atom;
 
@@ -116,7 +116,7 @@ impl Codec for CodecOpus {
         match key.trim() {
             "sample_rate" => {
                 if value.valid() {
-                    if let Atom::UnSignedValues { value, values } = value {
+                    if let Atom::UnSignedValues { value, .. } = value {
                         let sample_rate = match value {
                             8000 => SampleRate::Hz8000,
                             12000 => SampleRate::Hz12000,
@@ -131,7 +131,7 @@ impl Codec for CodecOpus {
             }
             "channels" => {
                 if value.valid() {
-                    if let Atom::UnSignedValues { value, values } = value {
+                    if let Atom::UnSignedValues { value, .. } = value {
                         let channels = match value {
                             1 => Channels::Mono,
                             2 => Channels::Stereo,
@@ -143,7 +143,7 @@ impl Codec for CodecOpus {
             }
             "application" => {
                 if value.valid() {
-                    if let Atom::StringValues { value, values } = value {
+                    if let Atom::StringValues { value, .. } = value {
                         let application = match value.trim() {
                             "Voip" => Application::Voip,
                             "Audio" => Application::Audio,
@@ -189,7 +189,7 @@ impl Codec for CodecOpus {
     fn decode(&mut self, data: &mut Vec<u8>) -> Vec<f32> {
         let mut buffer = Vec::new();
         while data.len() >= 0usize.size() {
-            let mut data = Vec::<u8>::from_bytes(data).unwrap();
+            let data = Vec::<u8>::from_bytes(data).unwrap();
             if data.is_empty() {
                 continue;
             }
