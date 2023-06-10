@@ -127,7 +127,7 @@ impl Tab for TabPeer {
                 ui.text_edit_singleline(&mut self.name);
                 if ui.button("Add").clicked() {
                     state.friends.push(crate::save_state::Friend {
-                        peer_id: peer_id.clone(),
+                        peer_id: *peer_id,
                         name: self.name.clone(),
                     });
                     let _ = state.sender.try_send(crate::logic::message::Message::Gui(
@@ -135,13 +135,11 @@ impl Tab for TabPeer {
                     ));
                 }
             });
-        } else {
-            if ui.button("Remove friend").clicked() {
-                state.friends.retain(|friend| friend.peer_id != *peer_id);
-                let _ = state.sender.try_send(crate::logic::message::Message::Gui(
-                    crate::logic::message::GuiMessage::Friends(state.friends.clone()),
-                ));
-            }
+        } else if ui.button("Remove friend").clicked() {
+            state.friends.retain(|friend| friend.peer_id != *peer_id);
+            let _ = state.sender.try_send(crate::logic::message::Message::Gui(
+                crate::logic::message::GuiMessage::Friends(state.friends.clone()),
+            ));
         }
         ui.spinner();
         None

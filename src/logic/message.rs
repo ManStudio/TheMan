@@ -166,11 +166,11 @@ impl TheManLogic {
                 // Cleanup channels!
                 if let Some(account) = &mut self.state.account {
                     for (_, hash) in account.voice_channels.iter() {
-                        for (_, channel_id) in hash {
-                            self.audio_sender.try_send(Message::Audio(
+                        hash.iter().for_each(|(_, channel_id)| {
+                            let _ = self.audio_sender.try_send(Message::Audio(
                                 AudioMessage::DestroyOuputChannel { id: *channel_id },
                             ));
-                        }
+                        });
                     }
                 }
                 self.state.set_account(account_index);

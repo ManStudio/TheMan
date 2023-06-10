@@ -87,25 +87,22 @@ impl Tab for TabMessageChannel {
                                                 if let Some(peer_id) = &state.peer_id {
                                                     if from == peer_id {
                                                         ui.label("From You");
+                                                    } else if let Some(from) =
+                                                        state.register_names.get(from)
+                                                    {
+                                                        ui.label(format!("From: {from}"));
                                                     } else {
-                                                        if let Some(from) =
-                                                            state.register_names.get(from)
+                                                        ui.label("From PeerId: ");
+                                                        if ui
+                                                            .selectable_label(
+                                                                false,
+                                                                &from.to_string(),
+                                                            )
+                                                            .clicked()
                                                         {
-                                                            ui.label(format!("From: {from}"));
-                                                        } else {
-                                                            ui.label("From PeerId: ");
-                                                            if ui
-                                                                .selectable_label(
-                                                                    false,
-                                                                    &from.to_string(),
-                                                                )
-                                                                .clicked()
-                                                            {
-                                                                ui.output_mut(|out| {
-                                                                    out.copied_text =
-                                                                        from.to_string()
-                                                                });
-                                                            }
+                                                            ui.output_mut(|out| {
+                                                                out.copied_text = from.to_string()
+                                                            });
                                                         }
                                                     }
                                                 }
@@ -155,17 +152,15 @@ impl Tab for TabMessageChannel {
                         peers.len(),
                         |ui, range| {
                             for peer in &peers[range] {
-                                if let Some(name) = state.register_names.get(&peer) {
+                                if let Some(name) = state.register_names.get(peer) {
                                     if ui.selectable_label(false, name).clicked() {
                                         message = Some(format!("o14,{peer}"));
                                     }
-                                } else {
-                                    if ui
-                                        .selectable_label(false, format!("PeerId: {}", peer))
-                                        .clicked()
-                                    {
-                                        message = Some(format!("o14,{peer}"));
-                                    }
+                                } else if ui
+                                    .selectable_label(false, format!("PeerId: {}", peer))
+                                    .clicked()
+                                {
+                                    message = Some(format!("o14,{peer}"));
                                 }
                                 ui.separator();
                             }

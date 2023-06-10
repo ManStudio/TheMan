@@ -252,7 +252,7 @@ impl TheManLogic {
                                     from,
                                 } => {
                                     println!("Voice: request: channel: {channel}, from: {from}");
-                                    self.sender.try_send(Message::Voice(
+                                    let _ = self.sender.try_send(Message::Voice(
                                         crate::logic::message::VoiceMessage::Request(channel, from),
                                     ));
                                 }
