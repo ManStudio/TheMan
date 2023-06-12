@@ -72,6 +72,10 @@ impl Tab for TabFriends {
         message
     }
 
+    fn hidden(&self) -> bool {
+        false
+    }
+
     fn recive(&mut self, _message: String) {}
 
     fn clone_box(&self) -> Box<dyn Tab> {

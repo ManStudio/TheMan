@@ -78,6 +78,10 @@ impl Tab for TabAccounts {
         message
     }
 
+    fn hidden(&self) -> bool {
+        false
+    }
+
     fn clone_box(&self) -> Box<dyn Tab> {
         Box::new(self.clone())
     }

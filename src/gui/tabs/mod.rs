@@ -36,6 +36,7 @@ use super::TheManGuiState;
 
 pub trait Tab {
     fn name(&self) -> &str;
+    fn hidden(&self) -> bool;
     fn update(&mut self, ui: &mut egui::Ui, state: &mut TheManGuiState) -> Option<String>;
 
     fn recive(&mut self, message: String);
@@ -208,8 +209,10 @@ impl<'a> egui_dock::TabViewer for TabViewer<'a> {
         ui.set_min_width(100.0);
 
         for (i, tab) in self.registered_tabs.iter().enumerate() {
-            if ui.button(tab.name()).clicked() {
-                self.added_tabs.push((i, node));
+            if !tab.hidden() {
+                if ui.button(tab.name()).clicked() {
+                    self.added_tabs.push((i, node));
+                }
             }
         }
     }

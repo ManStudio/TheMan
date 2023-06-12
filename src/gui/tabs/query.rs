@@ -112,6 +112,10 @@ impl Tab for TabQuery {
         None
     }
 
+    fn hidden(&self) -> bool {
+        true
+    }
+
     fn recive(&mut self, message: String) {
         if let Ok(index) = message.parse::<usize>() {
             self.index = index;

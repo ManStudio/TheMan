@@ -44,6 +44,10 @@ impl Tab for TabSwarmStatus {
         None
     }
 
+    fn hidden(&self) -> bool {
+        false
+    }
+
     fn clone_box(&self) -> Box<dyn Tab> {
         Box::new(self.clone())
     }

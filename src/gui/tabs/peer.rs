@@ -145,6 +145,10 @@ impl Tab for TabPeer {
         None
     }
 
+    fn hidden(&self) -> bool {
+        true
+    }
+
     fn recive(&mut self, message: String) {
         if let Ok(peer_id) = message.parse::<PeerId>() {
             self.peer_id = Some(peer_id)

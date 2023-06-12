@@ -196,6 +196,10 @@ impl Tab for TabMessageChannel {
         message
     }
 
+    fn hidden(&self) -> bool {
+        true
+    }
+
     fn recive(&mut self, message: String) {
         self.name = message.clone();
         self.topic = Some(IdentTopic::new(message));
