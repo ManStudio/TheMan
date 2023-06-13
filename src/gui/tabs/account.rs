@@ -47,8 +47,9 @@ impl Tab for TabAccount {
         });
 
         let mut expires = chrono::Utc::now();
-        if let Some(account) = state.accounts.get(self.account_id) {
+        if let Some(account) = state.accounts.get_mut(self.account_id) {
             expires = account.expires;
+            ui.checkbox(&mut account.renew, "Auto Renew");
         }
 
         ui.label(format!("Expires on: {}", expires.format("%d/%m/%Y %H:%M"))).on_hover_ui(|ui| {ui.label("That means that you should be connected to your accont at that time or some one else could get your name!");});

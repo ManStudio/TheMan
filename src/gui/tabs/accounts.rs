@@ -63,6 +63,7 @@ impl Tab for TabAccounts {
                         friends: vec![],
                         expires: Utc::now(),
                         channels: vec![],
+                        renew: false,
                     });
                     to_send.push(crate::logic::message::Message::UpdateAccounts(
                         state.accounts.clone(),

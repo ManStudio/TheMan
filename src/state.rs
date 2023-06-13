@@ -42,6 +42,7 @@ pub struct ActiveAccount {
     pub swarm: Swarm<TheManBehaviour>,
     pub friends: Vec<Friend>,
     pub expires: Instant,
+    pub auto_renew: bool,
     pub voice_channels: HashMap<String, HashMap<PeerId, usize>>,
 }
 
@@ -168,6 +169,7 @@ impl TheManState {
             friends: account.friends.clone(),
             index: account_index,
             voice_channels: HashMap::new(),
+            auto_renew: account.renew,
         };
 
         self.account = Some(account)

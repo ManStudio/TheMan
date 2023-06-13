@@ -28,6 +28,8 @@ pub struct Account {
     pub expires: DateTime<Utc>,
     #[serde(default)]
     pub channels: Vec<(String, ChannelType)>,
+    #[serde(default)]
+    pub renew: bool,
 }
 
 fn default_expires() -> DateTime<Utc> {

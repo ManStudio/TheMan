@@ -114,6 +114,7 @@ async fn main() {
                         friends: vec![],
                         expires: Utc::now(),
                         channels: vec![],
+                        renew: false,
                     }],
                     bootnodes: vec![],
                 }

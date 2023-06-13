@@ -65,7 +65,7 @@ impl TheManLogic {
 
         loop {
             if let Some(account) = &mut self.state.account {
-                let renew_account = tokio::time::Instant::from_std(account.expires);
+                let mut renew_account = tokio::time::Instant::from_std(account.expires);
                 tokio::select! {
                     Some(message) = self.reciver.recv() => {
                         if let Message::ShutDown = &message {
@@ -83,14 +83,18 @@ impl TheManLogic {
                         self.on_event(event).await;
                     }
                     _ = tokio::time::sleep_until(renew_account) => {
+                        if account.auto_renew{
                         if self.registration_step_1_query.is_some() && self.registration_step_1_query.is_some(){continue}
                         if 600 > account.swarm.network_info().num_peers(){
                             continue;
                         }
-                        let mut hasher = libp2p::multihash::Sha2_256::default();
-                        hasher.update(account.name.as_bytes());
-                        let hash = hasher.finalize();
-                        self.registration_step_1_query = Some((account.swarm.behaviour_mut().kademlia.get_closest_peers(hash.to_vec()), hash.to_vec()));
+                            let mut hasher = libp2p::multihash::Sha2_256::default();
+                            hasher.update(account.name.as_bytes());
+                            let hash = hasher.finalize();
+                            self.registration_step_1_query = Some((account.swarm.behaviour_mut().kademlia.get_closest_peers(hash.to_vec()), hash.to_vec()));
+                        }else{
+                            renew_account = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+                        }
                     }
                 }
             } else {
