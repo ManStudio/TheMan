@@ -209,10 +209,8 @@ impl<'a> egui_dock::TabViewer for TabViewer<'a> {
         ui.set_min_width(100.0);
 
         for (i, tab) in self.registered_tabs.iter().enumerate() {
-            if !tab.hidden() {
-                if ui.button(tab.name()).clicked() {
-                    self.added_tabs.push((i, node));
-                }
+            if !tab.hidden() && ui.button(tab.name()).clicked() {
+                self.added_tabs.push((i, node));
             }
         }
     }

@@ -62,10 +62,14 @@ impl TheManLogic {
             .await;
 
         self.audio_counter += 1;
+        let mut renew_account = None;
 
         loop {
             if let Some(account) = &mut self.state.account {
-                let mut renew_account = tokio::time::Instant::from_std(account.expires);
+                if renew_account.is_none() {
+                    renew_account = Some(tokio::time::Instant::from_std(account.expires));
+                }
+                let renew = renew_account.unwrap();
                 tokio::select! {
                     Some(message) = self.reciver.recv() => {
                         if let Message::ShutDown = &message {
@@ -82,7 +86,7 @@ impl TheManLogic {
                     event = account.swarm.select_next_some() => {
                         self.on_event(event).await;
                     }
-                    _ = tokio::time::sleep_until(renew_account) => {
+                    _ = tokio::time::sleep_until(renew) => {
                         if account.auto_renew{
                         if self.registration_step_1_query.is_some() && self.registration_step_1_query.is_some(){continue}
                         if 600 > account.swarm.network_info().num_peers(){
@@ -93,7 +97,7 @@ impl TheManLogic {
                             let hash = hasher.finalize();
                             self.registration_step_1_query = Some((account.swarm.behaviour_mut().kademlia.get_closest_peers(hash.to_vec()), hash.to_vec()));
                         }else{
-                            renew_account = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+                            renew_account = Some(tokio::time::Instant::now() + std::time::Duration::from_secs(5));
                         }
                     }
                 }
