@@ -128,7 +128,7 @@ async fn main() {
                 ))
                 .tweak(eframe::egui::FontTweak {
                     scale: 1.0,
-                    y_offset_factor: -0.2,
+                    y_offset_factor: 0.0,
                     y_offset: 0.0,
                     baseline_offset_factor: 0.0,
                 }),
