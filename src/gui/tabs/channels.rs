@@ -1,5 +1,3 @@
-use eframe::egui;
-
 use crate::save_state::ChannelType;
 
 use super::Tab;
@@ -19,7 +17,7 @@ impl Tab for TabChannels {
 
     fn update(
         &mut self,
-        ui: &mut eframe::egui::Ui,
+        ui: &mut egui::Ui,
         state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
         let mut script = String::new();

@@ -19,7 +19,7 @@ impl Tab for TabAccount {
 
     fn update(
         &mut self,
-        ui: &mut eframe::egui::Ui,
+        ui: &mut egui::Ui,
         state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
         if self.name.is_empty() && self.peer_id.is_empty() {

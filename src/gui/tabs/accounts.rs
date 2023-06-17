@@ -18,7 +18,7 @@ impl Tab for TabAccounts {
 
     fn update(
         &mut self,
-        ui: &mut eframe::egui::Ui,
+        ui: &mut egui::Ui,
         state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
         let mut message = None;

@@ -1,6 +1,5 @@
 use std::{collections::HashMap, time::Duration};
 
-use eframe::egui;
 use libp2p::{
     gossipsub::TopicHash,
     kad::{kbucket::NodeStatus, ProgressStep, QueryId, QueryResult, QueryStats},
@@ -195,8 +194,8 @@ impl TheMan {
     }
 }
 
-impl eframe::App for TheMan {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+impl TheMan {
+    pub fn update(&mut self, ctx: &egui::Context) {
         if !self.one_time {
             // ctx.set_debug_on_hover(true);
             self.one_time = true;
@@ -206,44 +205,57 @@ impl eframe::App for TheMan {
 
         self.tab_manager.ui(ctx, &mut self.state);
     }
-
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        if let Some(account_id) = self.state.account_id {
-            if let Some(account) = self.state.accounts.get_mut(account_id) {
-                account.channels = self.state.channels.clone();
-            }
-        }
-
-        let _ = self
-            .state
-            .sender
-            .try_send(Message::UpdateAccounts(self.state.accounts.clone()));
-
-        self.state.sender.try_send(Message::Save).unwrap();
-        let save_state = loop {
-            if let Some(save) = &self.state.save {
-                break save;
-            } else {
-                self.process_events();
-            }
-        };
-
-        if let Some(save) = save_state {
-            storage.set_string("state", ron::to_string(save).unwrap());
-            println!("Saved");
-        }
-
-        if self.should_close {
-            self.state.sender.try_send(Message::ShutDown).unwrap();
-        }
-    }
-
-    fn auto_save_interval(&self) -> std::time::Duration {
-        Duration::MAX
-    }
-
-    fn on_close_event(&mut self) -> bool {
-        self.should_close = true;
-        true
-    }
 }
+
+// impl eframe::App for TheMan {
+//     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+//         if !self.one_time {
+//             // ctx.set_debug_on_hover(true);
+//             self.one_time = true;
+//         }
+
+//         self.process_events();
+
+//         self.tab_manager.ui(ctx, &mut self.state);
+//     }
+
+//     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+//         if let Some(account_id) = self.state.account_id {
+//             if let Some(account) = self.state.accounts.get_mut(account_id) {
+//                 account.channels = self.state.channels.clone();
+//             }
+//         }
+
+//         let _ = self
+//             .state
+//             .sender
+//             .try_send(Message::UpdateAccounts(self.state.accounts.clone()));
+
+//         self.state.sender.try_send(Message::Save).unwrap();
+//         let save_state = loop {
+//             if let Some(save) = &self.state.save {
+//                 break save;
+//             } else {
+//                 self.process_events();
+//             }
+//         };
+
+//         if let Some(save) = save_state {
+//             storage.set_string("state", ron::to_string(save).unwrap());
+//             println!("Saved");
+//         }
+
+//         if self.should_close {
+//             self.state.sender.try_send(Message::ShutDown).unwrap();
+//         }
+//     }
+
+//     fn auto_save_interval(&self) -> std::time::Duration {
+//         Duration::MAX
+//     }
+
+//     fn on_close_event(&mut self) -> bool {
+//         self.should_close = true;
+//         true
+//     }
+// }

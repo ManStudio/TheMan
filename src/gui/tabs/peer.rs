@@ -1,4 +1,3 @@
-use eframe::egui;
 use libp2p::PeerId;
 
 use crate::state::{PingError, PingOk};
@@ -19,7 +18,7 @@ impl Tab for TabPeer {
 
     fn update(
         &mut self,
-        ui: &mut eframe::egui::Ui,
+        ui: &mut egui::Ui,
         state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
         let Some(peer_id) = &self.peer_id else{ui.label("No peer selected!");return None};

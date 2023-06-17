@@ -1,5 +1,3 @@
-use eframe::egui;
-
 use crate::logic::message::{Message, VoiceMessage};
 
 use super::Tab;
@@ -19,7 +17,7 @@ impl Tab for TabVoiceChannel {
 
     fn update(
         &mut self,
-        ui: &mut eframe::egui::Ui,
+        ui: &mut egui::Ui,
         state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
         let mut message = None;

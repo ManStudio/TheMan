@@ -1,4 +1,4 @@
-use eframe::egui::output::OpenUrl;
+use egui::output::OpenUrl;
 
 use super::Tab;
 
@@ -14,7 +14,7 @@ impl Tab for TabAbout {
 
     fn update(
         &mut self,
-        ui: &mut eframe::egui::Ui,
+        ui: &mut egui::Ui,
         _state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
         ui.label("TheMan");

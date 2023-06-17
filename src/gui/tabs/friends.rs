@@ -1,4 +1,3 @@
-use eframe::egui;
 use libp2p::PeerId;
 
 use super::Tab;
@@ -17,7 +16,7 @@ impl Tab for TabFriends {
 
     fn update(
         &mut self,
-        ui: &mut eframe::egui::Ui,
+        ui: &mut egui::Ui,
         state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
         let mut message = None;

@@ -1,5 +1,3 @@
-use eframe::egui;
-
 use super::Tab;
 
 #[derive(Default)]
@@ -14,7 +12,7 @@ impl Tab for TabQuerys {
 
     fn update(
         &mut self,
-        ui: &mut eframe::egui::Ui,
+        ui: &mut egui::Ui,
         state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
         let mut message = None;

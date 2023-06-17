@@ -12,7 +12,7 @@ impl Tab for TabSwarmStatus {
 
     fn update(
         &mut self,
-        ui: &mut eframe::egui::Ui,
+        ui: &mut egui::Ui,
         state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
         if let Some(kademlia_status) = &state.kademlia_status {

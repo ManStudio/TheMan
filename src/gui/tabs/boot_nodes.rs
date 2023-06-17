@@ -1,5 +1,3 @@
-use eframe::egui;
-
 use crate::logic::message::Message;
 
 use super::Tab;
@@ -16,7 +14,7 @@ impl Tab for TabBootNodes {
 
     fn update(
         &mut self,
-        ui: &mut eframe::egui::Ui,
+        ui: &mut egui::Ui,
         state: &mut crate::gui::TheManGuiState,
     ) -> Option<String> {
         ui.horizontal(|ui| {
