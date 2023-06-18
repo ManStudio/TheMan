@@ -77,18 +77,19 @@ async fn main() {
     let mut egui_state = egui_winit::State::new(&event_loop);
     let mut egui_painter = egui_glow::Painter::new(gl.clone(), "", None).unwrap();
 
+    let save_dir = dirs::data_local_dir().unwrap().join("theman");
+
     let state: Option<TheManSaveState> =
-        // if let Some(data) = creator.storage.expect("storage").get_string("state") {
-        //     if let Ok(state) = ron::from_str(&data) {
-        //         Some(state)
-        //     } else {
-        //         eprintln!("Cannot perse save file");
-        //         None
-        //     }
-        // } else {
-        //     None
-        // };
-    None;
+        if let Ok(data) = std::fs::read_to_string(save_dir.join("app.ron")) {
+            if let Ok(state) = ron::from_str(&data) {
+                Some(state)
+            } else {
+                eprintln!("Cannot perse save file");
+                None
+            }
+        } else {
+            None
+        };
     let state = if let Some(state) = state {
         state
     } else {
