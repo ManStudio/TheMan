@@ -219,6 +219,7 @@ async fn main() {
                 winit::event::Event::RedrawEventsCleared => {}
                 winit::event::Event::LoopDestroyed => {
                     println!("Loop Destroyed");
+                    app.save();
                     app.state.send(Message::ShutDown);
                 }
             }
