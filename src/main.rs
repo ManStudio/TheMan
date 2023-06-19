@@ -162,6 +162,7 @@ async fn main() {
         let mut app = TheMan::new(gui_logic_receiver, logic_gui_sender);
 
         event_loop.run_return(move |event, event_loop, control_flow| {
+            control_flow.set_wait();
             //
             match event {
                 winit::event::Event::NewEvents(event) => {}
