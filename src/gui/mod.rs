@@ -119,6 +119,16 @@ impl TheMan {
                 Message::BootNodes(nodes) => self.state.bootnodes = nodes,
                 Message::Peers(peers) => self.state.peers = peers,
                 Message::AccountActivate(account_index, peer_id) => {
+                    self.state.kademlia_status = None;
+                    self.state.kademlia_query_progress.clear();
+                    self.state.query_id_for_key.clear();
+                    self.state.query_id_for_record.clear();
+                    self.state.messages.clear();
+                    self.state.register_names.clear();
+                    self.state.subscribers.clear();
+                    self.state.voice_connected.clear();
+                    self.state.peers.clear();
+                    self.state.adresses.clear();
                     if let Some(account) = self.state.accounts.get(account_index) {
                         self.state.name = Some(account.name.clone());
                         self.state.channels = account.channels.clone();

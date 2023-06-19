@@ -163,6 +163,11 @@ impl TheManLogic {
                     .try_send(Message::Accounts(self.state.accounts.clone()));
             }
             Message::SetAccount(account_index) => {
+                // Cleanup
+                self.subscribed.clear();
+                self.registration_query = None;
+                self.registration_step_1_query = None;
+                self.state.peers.clear();
                 // Cleanup channels!
                 if let Some(account) = &mut self.state.account {
                     for (_, hash) in account.voice_channels.iter() {
