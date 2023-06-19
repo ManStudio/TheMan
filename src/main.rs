@@ -80,11 +80,12 @@ async fn main() {
 
     let state: Option<TheManSaveState> =
         if let Ok(data) = std::fs::read_to_string(save_dir.join("app.ron")) {
-            if let Ok(state) = ron::from_str(&data) {
-                Some(state)
-            } else {
-                eprintln!("Cannot perse save file");
-                None
+            match ron::from_str(&data) {
+                Ok(state) => Some(state),
+                Err(error) => {
+                    eprintln!("Cannot perse save file: {error}");
+                    None
+                }
             }
         } else {
             None

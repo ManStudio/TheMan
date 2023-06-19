@@ -228,14 +228,16 @@ impl TheMan {
         };
 
         let dir = dirs::data_local_dir().unwrap().join("theman");
-        std::fs::create_dir_all(dir.clone());
-        if let Ok(mut file) = std::fs::File::options()
-            .write(true)
-            .create(true)
-            .open(dir.join("app.ron"))
-        {
-            if let Some(save) = save_state {
-                file.write_all(ron::to_string(save).unwrap().as_bytes());
+        if let Some(save) = save_state {
+            std::fs::create_dir_all(dir.clone());
+            if let Ok(mut file) = std::fs::File::options()
+                .write(true)
+                .truncate(true)
+                .create(true)
+                .open(dir.join("app.ron"))
+            {
+                file.write_all(ron::to_string(save).unwrap().as_bytes())
+                    .unwrap();
                 println!("Saved");
             }
         }
