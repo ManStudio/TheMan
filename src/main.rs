@@ -37,7 +37,8 @@ async fn main() {
     let audio: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>> = Arc::new(Mutex::new(None));
     let au = audio.clone();
 
-    let mut event_loop = winit::event_loop::EventLoopBuilder::new().build();
+    let mut event_loop: winit::event_loop::EventLoop<Message> =
+        winit::event_loop::EventLoopBuilder::with_user_event().build();
     let (_, config) = DisplayBuilder::new()
         .build(&event_loop, ConfigTemplateBuilder::new(), |mut configs| {
             configs.next().unwrap()
@@ -165,7 +166,7 @@ async fn main() {
         event_loop.run_return(move |event, event_loop, control_flow| {
             //
             match event {
-                winit::event::Event::NewEvents(_) => {}
+                winit::event::Event::NewEvents(event) => {}
                 winit::event::Event::WindowEvent { window_id, event } => {
                     let res = egui_state.on_event(&egui_context, &event);
                     if !res.consumed {
