@@ -39,7 +39,8 @@ async fn main() {
 
     let mut event_loop: winit::event_loop::EventLoop<Message> =
         winit::event_loop::EventLoopBuilder::with_user_event().build();
-    let (_, config) = DisplayBuilder::new()
+    let (window, config) = DisplayBuilder::new()
+        .with_window_builder(Some(WindowBuilder::new().with_title("TheMan")))
         .build(&event_loop, ConfigTemplateBuilder::new(), |mut configs| {
             configs.next().unwrap()
         })
@@ -52,10 +53,7 @@ async fn main() {
             .unwrap()
     };
 
-    let window = WindowBuilder::new()
-        .with_title("TheMan")
-        .build(&event_loop)
-        .unwrap();
+    let window = window.unwrap();
 
     let window_attribs =
         window.build_surface_attributes(SurfaceAttributesBuilder::<WindowSurface>::new());
