@@ -2,25 +2,22 @@ use std::sync::{Arc, Mutex};
 
 use audio::Audio;
 use chrono::Utc;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use glow::HasContext;
 use glutin::{
     config::ConfigTemplateBuilder,
     context::ContextAttributesBuilder,
     display::GetGlDisplay,
     prelude::{GlDisplay, NotCurrentGlContextSurfaceAccessor},
-    surface::{GlSurface, SurfaceAttributes, SurfaceAttributesBuilder, WindowSurface},
+    surface::{GlSurface, SurfaceAttributesBuilder, WindowSurface},
 };
 use glutin_winit::{DisplayBuilder, GlWindow};
 use gui::TheMan;
-use libp2p::{identity::Keypair, request_response::RequestResponseEvent};
+use libp2p::identity::Keypair;
 use logic::{message::Message, TheManLogic};
-use raw_window_handle::HasRawWindowHandle;
 use save_state::{Account, TheManSaveState};
 use state::TheManState;
 use winit::{
-    dpi::PhysicalSize, event_loop, platform::run_return::EventLoopExtRunReturn,
-    window::WindowBuilder,
+    dpi::PhysicalSize, platform::run_return::EventLoopExtRunReturn, window::WindowBuilder,
 };
 
 pub mod audio;
@@ -72,7 +69,7 @@ async fn main() {
 
     let gl = Arc::new(gl);
 
-    let mut egui_context = egui::Context::default();
+    let egui_context = egui::Context::default();
     let mut egui_state = egui_winit::State::new(&event_loop);
     let mut egui_painter = egui_glow::Painter::new(gl.clone(), "", None).unwrap();
 
