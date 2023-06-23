@@ -1,5 +1,6 @@
 use std::{collections::HashMap, io::Write, time::Duration};
 
+use egui::epaint::ahash::HashSet;
 use libp2p::{
     gossipsub::TopicHash,
     kad::{ProgressStep, QueryId, QueryResult, QueryStats},
@@ -26,7 +27,7 @@ pub struct TheManGuiState {
     pub account_id: Option<usize>,
     pub receiver: tokio::sync::mpsc::Receiver<Message>,
     pub sender: tokio::sync::mpsc::Sender<Message>,
-    pub adresses: Vec<Multiaddr>,
+    pub adresses: HashSet<Multiaddr>,
     pub accounts: Vec<Account>,
     pub kademlia_query_progress: HashMap<QueryId, (QueryResult, QueryStats, ProgressStep)>,
     pub query_id_for_key: HashMap<Vec<u8>, QueryId>,
@@ -87,7 +88,7 @@ impl TheMan {
                 sender,
                 peer_id: None,
                 accounts: Vec::new(),
-                adresses: Vec::new(),
+                adresses: HashSet::default(),
                 kademlia_query_progress: HashMap::new(),
                 query_id_for_key: HashMap::new(),
                 messages: HashMap::new(),

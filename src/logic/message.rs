@@ -1,6 +1,7 @@
 use std::{collections::HashMap, time::Instant};
 
 use chrono::Utc;
+use egui::epaint::ahash::HashSet;
 use libp2p::{
     gossipsub::{IdentTopic, TopicHash},
     kad::{ProgressStep, QueryId, QueryResult, QueryStats},
@@ -66,7 +67,7 @@ pub enum Message {
     Accounts(Vec<Account>),
     UpdateAccounts(Vec<Account>),
     GetAdresses,
-    Adresses(Vec<Multiaddr>),
+    Adresses(HashSet<Multiaddr>),
     SearchForKey(Vec<u8>),
     ResSearchForKey(Vec<u8>, QueryId),
     SearchForRecord(Vec<u8>),
@@ -217,7 +218,7 @@ impl TheManLogic {
                         .swarm
                         .external_addresses()
                         .cloned()
-                        .collect::<Vec<Multiaddr>>();
+                        .collect::<HashSet<Multiaddr>>();
 
                     let _ = self.sender.try_send(Message::Adresses(adresses));
                 }
