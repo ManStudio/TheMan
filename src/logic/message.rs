@@ -154,8 +154,8 @@ impl TheManLogic {
                         self.bootstrap =
                             Some(account.swarm.behaviour_mut().kademlia.bootstrap().unwrap());
                     }
-                    self.bootstraping = value;
                 }
+                self.bootstraping = value;
             }
             Message::GetAccounts => {
                 let _ = self
@@ -192,8 +192,10 @@ impl TheManLogic {
                         .swarm
                         .listen_on("/ip4/0.0.0.0/tcp/0".parse().unwrap());
 
-                    self.bootstrap =
-                        Some(account.swarm.behaviour_mut().kademlia.bootstrap().unwrap());
+                    if self.bootstraping {
+                        self.bootstrap =
+                            Some(account.swarm.behaviour_mut().kademlia.bootstrap().unwrap());
+                    }
 
                     let _ = self
                         .sender

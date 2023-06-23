@@ -31,15 +31,16 @@ impl Tab for TabSwarmStatus {
                 "Established outgoing: {}",
                 conn.num_established_outgoing()
             ));
-            if ui
-                .checkbox(&mut state.bootstraping, "Bootstraping")
-                .changed()
-            {
-                state.send(crate::logic::message::Message::BootstrapSet(
-                    state.bootstraping,
-                ));
-            }
             ui.spinner();
+        }
+
+        if ui
+            .checkbox(&mut state.bootstraping, "Bootstraping")
+            .changed()
+        {
+            state.send(crate::logic::message::Message::BootstrapSet(
+                state.bootstraping,
+            ));
         }
         None
     }
