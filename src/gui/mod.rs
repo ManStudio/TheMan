@@ -2,8 +2,7 @@ use std::{collections::HashMap, io::Write, time::Duration};
 
 use libp2p::{
     gossipsub::TopicHash,
-    kad::{kbucket::NodeStatus, ProgressStep, QueryId, QueryResult, QueryStats},
-    swarm::AddressRecord,
+    kad::{ProgressStep, QueryId, QueryResult, QueryStats},
     Multiaddr, PeerId,
 };
 
@@ -19,14 +18,15 @@ use tabs::*;
 pub struct TheManGuiState {
     pub kademlia_status: Option<libp2p::swarm::NetworkInfo>,
     pub save: Option<Option<TheManSaveState>>,
-    pub bootnodes: Vec<(PeerId, NodeStatus, Vec<Multiaddr>)>,
+    // TODO Add boot node status, in the current version of libp2p 0.52.0 NodeStatus is not public
+    pub bootnodes: Vec<(PeerId, Vec<Multiaddr>)>,
     pub peers: HashMap<PeerId, PeerStatus>,
     pub peer_id: Option<PeerId>,
     pub name: Option<String>,
     pub account_id: Option<usize>,
     pub receiver: tokio::sync::mpsc::Receiver<Message>,
     pub sender: tokio::sync::mpsc::Sender<Message>,
-    pub adresses: Vec<AddressRecord>,
+    pub adresses: Vec<Multiaddr>,
     pub accounts: Vec<Account>,
     pub kademlia_query_progress: HashMap<QueryId, (QueryResult, QueryStats, ProgressStep)>,
     pub query_id_for_key: HashMap<Vec<u8>, QueryId>,

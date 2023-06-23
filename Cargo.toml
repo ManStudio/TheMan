@@ -24,7 +24,7 @@ cpal = { version = "0.15", features = ["num-traits"] }
 # eframe = { version = "0.22", features = ["persistence", "ron", "wayland"] }
 egui_dock = { version = "0.6", features = ["serde"] }
 env_logger = "0.10.0"
-libp2p = { version = "0.51", features = ["full"] }
+libp2p = { version = "0.52", features = ["full"] }
 log = "0.4"
 ron = "0.8"
 serde = "1.0" 

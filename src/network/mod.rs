@@ -109,7 +109,7 @@ impl TheManBehaviour {
 impl NetworkBehaviour for TheManBehaviour {
     type ConnectionHandler = Connection;
 
-    type OutEvent = event::BehaviourEvent;
+    type ToSwarm = event::BehaviourEvent;
 
     fn on_swarm_event(&mut self, event: libp2p::swarm::FromSwarm<Self::ConnectionHandler>) {
         match event {
@@ -193,7 +193,7 @@ impl NetworkBehaviour for TheManBehaviour {
         &mut self,
         cx: &mut std::task::Context<'_>,
         params: &mut impl libp2p::swarm::PollParameters,
-    ) -> std::task::Poll<ToSwarm<Self::OutEvent, THandlerInEvent<Self>>> {
+    ) -> std::task::Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
         if let Some(event) = self.events.pop_front() {
             return std::task::Poll::Ready(event);
         }

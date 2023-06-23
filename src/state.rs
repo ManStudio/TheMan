@@ -85,8 +85,7 @@ impl TheManState {
 
             for node in self.bootnodes.iter() {
                 let Some(protocol) = node.iter().last() else {continue};
-                let Protocol::P2p(id) = protocol else {continue};
-                let Ok(peer_id) = PeerId::from_multihash(id)else{continue};
+                let Protocol::P2p(peer_id) = protocol else {continue};
                 log::debug!("Adding BOOTNODE to kademlia: {node}/p2p/{protocol}");
                 behaviour.add_address(&peer_id, node.clone());
             }

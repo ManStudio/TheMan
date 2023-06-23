@@ -1,4 +1,4 @@
-use libp2p::{multihash::Hasher, PeerId};
+use libp2p::PeerId;
 
 use crate::logic::message::Message;
 
@@ -29,9 +29,7 @@ impl Tab for TabDiscover {
             ui.text_edit_singleline(&mut self.name);
             ui.separator();
             if ui.button("Search").clicked() {
-                let mut hasher = libp2p::multihash::Sha2_256::default();
-                hasher.update(self.name.as_bytes());
-                let key = hasher.finalize().to_vec();
+                let key = self.name.as_bytes().to_vec();
                 self.waiting_for_key = Some(key.clone());
                 self.waiting_for_record = None;
                 state.send(Message::SearchForKey(key));

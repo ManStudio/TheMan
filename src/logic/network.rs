@@ -182,15 +182,10 @@ impl TheManLogic {
                     BehaviourEvent::Ping(event) => {
                         if let Some(peer) = self.state.peers.get_mut(&event.peer) {
                             let ping = match event.result {
-                                Ok(ping) => match ping {
-                                    libp2p::ping::Success::Pong => Ok(crate::state::PingOk::Pong),
-                                    libp2p::ping::Success::Ping { rtt } => {
-                                        Ok(crate::state::PingOk::Ping(
-                                            std::time::Instant::now() - rtt,
-                                            rtt,
-                                        ))
-                                    }
-                                },
+                                Ok(ping) => Ok(crate::state::PingOk::Ping(
+                                    std::time::Instant::now() - ping,
+                                    ping,
+                                )),
                                 Err(err) => match err {
                                     libp2p::ping::Failure::Timeout => Err(PingError::Timeout),
                                     libp2p::ping::Failure::Unsupported => {
@@ -315,7 +310,6 @@ impl TheManLogic {
             libp2p::swarm::SwarmEvent::ExpiredListenAddr { .. } => self.update_swarm_status(),
             libp2p::swarm::SwarmEvent::ListenerClosed { .. } => self.update_swarm_status(),
             libp2p::swarm::SwarmEvent::ListenerError { .. } => self.update_swarm_status(),
-            libp2p::swarm::SwarmEvent::Dialing(_) => {}
             _ => {}
         };
     }

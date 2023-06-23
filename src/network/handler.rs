@@ -5,6 +5,7 @@ use libp2p::{
     core::{muxing::SubstreamBox, upgrade::ReadyUpgrade, Negotiated},
     futures::{future::BoxFuture, AsyncReadExt, AsyncWriteExt, FutureExt},
     swarm::{ConnectionHandler, ConnectionHandlerEvent, SubstreamProtocol},
+    Stream,
 };
 
 use super::{packet::Packet, Failure, TheManBehaviour};
@@ -60,9 +61,9 @@ pub enum OutputEvent {
 }
 
 impl ConnectionHandler for Connection {
-    type InEvent = InputEvent;
+    type FromBehaviour = InputEvent;
 
-    type OutEvent = OutputEvent;
+    type ToBehaviour = OutputEvent;
 
     type Error = Failure;
 
@@ -91,7 +92,7 @@ impl ConnectionHandler for Connection {
         libp2p::swarm::ConnectionHandlerEvent<
             Self::OutboundProtocol,
             Self::OutboundOpenInfo,
-            Self::OutEvent,
+            Self::ToBehaviour,
             Self::Error,
         >,
     > {
@@ -114,7 +115,7 @@ impl ConnectionHandler for Connection {
         if !self.connected && self.inbound.initial() && self.outbound.initial() {
             println!("Connected!");
             self.connected = true;
-            return std::task::Poll::Ready(libp2p::swarm::ConnectionHandlerEvent::Custom(
+            return std::task::Poll::Ready(libp2p::swarm::ConnectionHandlerEvent::NotifyBehaviour(
                 OutputEvent::SuccesfulyConnect,
             ));
         }
@@ -149,7 +150,7 @@ impl ConnectionHandler for Connection {
                                     } => {
                                         return (
                                             stream,
-                                            Some(ConnectionHandlerEvent::Custom(
+                                            Some(ConnectionHandlerEvent::NotifyBehaviour(
                                                 OutputEvent::VoicePacket {
                                                     codec,
                                                     data,
@@ -162,7 +163,7 @@ impl ConnectionHandler for Connection {
                                     Packet::VoiceDisconnect { channel } => {
                                         return (
                                             stream,
-                                            Some(ConnectionHandlerEvent::Custom(
+                                            Some(ConnectionHandlerEvent::NotifyBehaviour(
                                                 OutputEvent::Disconnected(channel),
                                             )),
                                             buffer,
@@ -172,7 +173,7 @@ impl ConnectionHandler for Connection {
                                         println!("Recv channel: {channel}");
                                         return (
                                             stream,
-                                            Some(ConnectionHandlerEvent::Custom(
+                                            Some(ConnectionHandlerEvent::NotifyBehaviour(
                                                 OutputEvent::Connected(channel),
                                             )),
                                             buffer,
@@ -264,7 +265,7 @@ impl ConnectionHandler for Connection {
         std::task::Poll::Pending
     }
 
-    fn on_behaviour_event(&mut self, event: Self::InEvent) {
+    fn on_behaviour_event(&mut self, event: Self::FromBehaviour) {
         self.events.push_back(event);
     }
 
@@ -293,13 +294,13 @@ impl ConnectionHandler for Connection {
 
 pub enum Stage {
     None,
-    Initial(Negotiated<SubstreamBox>),
-    RunningInitial(BoxFuture<'static, Negotiated<SubstreamBox>>),
+    Initial(Stream),
+    RunningInitial(BoxFuture<'static, Stream>),
     RunningBase(
         BoxFuture<
             'static,
             (
-                Negotiated<SubstreamBox>,
+                Stream,
                 Option<
                     ConnectionHandlerEvent<
                         ReadyUpgrade<&'static str>,

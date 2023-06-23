@@ -82,8 +82,8 @@ impl Tab for TabPeer {
                             .id_source("Peer Protocols")
                             .show(ui, |ui| {
                                 for protocol in info.protocols.iter() {
-                                    if ui.selectable_label(false, protocol).clicked() {
-                                        ui.output_mut(|out| out.copied_text = protocol.clone())
+                                    if ui.selectable_label(false, protocol.to_string()).clicked() {
+                                        ui.output_mut(|out| out.copied_text = protocol.to_string())
                                     }
                                 }
                             });

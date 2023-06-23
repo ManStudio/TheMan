@@ -3,9 +3,8 @@ use std::{collections::HashMap, time::Instant};
 use chrono::Utc;
 use libp2p::{
     gossipsub::{IdentTopic, TopicHash},
-    kad::{kbucket::NodeStatus, ProgressStep, QueryId, QueryResult, QueryStats},
+    kad::{ProgressStep, QueryId, QueryResult, QueryStats},
     multiaddr::Protocol,
-    swarm::AddressRecord,
     Multiaddr, PeerId,
 };
 
@@ -57,7 +56,8 @@ pub enum Message {
     SaveResponse(Option<TheManSaveState>),
     BootstrapSet(bool),
     GetBootNodes,
-    BootNodes(Vec<(PeerId, NodeStatus, Vec<Multiaddr>)>),
+    // TODO Add boot node status, in the current version of libp2p 0.52.0 NodeStatus is not public
+    BootNodes(Vec<(PeerId, Vec<Multiaddr>)>),
     GetPeers,
     Peers(HashMap<PeerId, PeerStatus>),
     AccountActivate(usize, PeerId),
@@ -66,7 +66,7 @@ pub enum Message {
     Accounts(Vec<Account>),
     UpdateAccounts(Vec<Account>),
     GetAdresses,
-    Adresses(Vec<AddressRecord>),
+    Adresses(Vec<Multiaddr>),
     SearchForKey(Vec<u8>),
     ResSearchForKey(Vec<u8>, QueryId),
     SearchForRecord(Vec<u8>),
@@ -135,7 +135,6 @@ impl TheManLogic {
                         for peer in kbucket.iter() {
                             peers.push((
                                 *peer.node.key.preimage(),
-                                peer.status,
                                 peer.node.value.iter().cloned().collect::<Vec<Multiaddr>>(),
                             ));
                         }
@@ -218,7 +217,7 @@ impl TheManLogic {
                         .swarm
                         .external_addresses()
                         .cloned()
-                        .collect::<Vec<AddressRecord>>();
+                        .collect::<Vec<Multiaddr>>();
 
                     let _ = self.sender.try_send(Message::Adresses(adresses));
                 }

@@ -29,8 +29,8 @@ impl Tab for TabBootNodes {
             for peer in &state.bootnodes[range] {
                 ui.horizontal(|ui| {
                     ui.label(format!("Id: {}", peer.0));
-                    ui.label(format!("Status: {:?}", peer.1));
-                    ui.label(format!("Adresses: {:?}", peer.2));
+                    // ui.label(format!("Status: {:?}", peer.1));
+                    ui.label(format!("Adresses: {:?}", peer.1));
                 });
             }
         });

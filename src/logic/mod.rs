@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use crate::state::TheManState;
-use libp2p::{futures::StreamExt, gossipsub::TopicHash, multihash::Hasher};
+use libp2p::{futures::StreamExt, gossipsub::TopicHash};
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use self::message::Message;
@@ -92,10 +92,10 @@ impl TheManLogic {
                         if 600 > account.swarm.network_info().num_peers(){
                             continue;
                         }
-                            let mut hasher = libp2p::multihash::Sha2_256::default();
-                            hasher.update(account.name.as_bytes());
-                            let hash = hasher.finalize();
-                            self.registration_step_1_query = Some((account.swarm.behaviour_mut().kademlia.get_closest_peers(hash.to_vec()), hash.to_vec()));
+                            // let mut hasher = libp2p::multihash::Sha2_256::default();
+                            // hasher.update(account.name.as_bytes());
+                            let hash = account.name.as_bytes().to_vec();
+                            self.registration_step_1_query = Some((account.swarm.behaviour_mut().kademlia.get_closest_peers(hash.clone()), hash));
                         }else{
                             renew_account = Some(tokio::time::Instant::now() + std::time::Duration::from_secs(5));
                         }

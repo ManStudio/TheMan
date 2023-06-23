@@ -40,11 +40,8 @@ impl Tab for TabMySelf {
         }
         ui.label("Adresses:");
         for adress in state.adresses.iter() {
-            if ui
-                .selectable_label(false, format!("{}", adress.addr))
-                .clicked()
-            {
-                ui.output_mut(|out| out.copied_text = format!("{}", adress.addr));
+            if ui.selectable_label(false, format!("{}", adress)).clicked() {
+                ui.output_mut(|out| out.copied_text = format!("{}", adress));
             }
         }
         None
