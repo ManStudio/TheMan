@@ -2,17 +2,17 @@ use std::collections::HashMap;
 
 use libp2p::swarm::SwarmEvent;
 
-use crate::state::{BehaviourEvent, PeerStatus, PingError};
+use crate::state::{PeerStatus, PingError, TheManBehaviourEvent};
 
 use super::{message::Message, TheManLogic};
 
 impl TheManLogic {
-    pub async fn on_event<E>(&mut self, event: SwarmEvent<BehaviourEvent, E>) {
+    pub async fn on_event<E>(&mut self, event: SwarmEvent<TheManBehaviourEvent, E>) {
         // println!("Event: {event:?}");
         match event {
             libp2p::swarm::SwarmEvent::Behaviour(event) => {
                 match event {
-                    BehaviourEvent::Kademlia(event) => {
+                    TheManBehaviourEvent::Kademlia(event) => {
                         match event {
                             libp2p::kad::KademliaEvent::InboundRequest { .. } => {
                                 // println!("Request: {request:?}");
@@ -126,7 +126,7 @@ impl TheManLogic {
                             libp2p::kad::KademliaEvent::PendingRoutablePeer { .. } => {}
                         }
                     }
-                    BehaviourEvent::Identify(event) => {
+                    TheManBehaviourEvent::Identify(event) => {
                         match event {
                             libp2p::identify::Event::Received { peer_id, info } => {
                                 if let Some(peer) = self.state.peers.get_mut(&peer_id) {
@@ -139,11 +139,11 @@ impl TheManLogic {
                             libp2p::identify::Event::Error { .. } => {}
                         }
                     }
-                    BehaviourEvent::MDNS(event) => match event {
+                    TheManBehaviourEvent::Mdns(event) => match event {
                         libp2p::mdns::Event::Discovered(_discovered) => {}
                         libp2p::mdns::Event::Expired(_) => {}
                     },
-                    BehaviourEvent::GossIpSub(event) => match event {
+                    TheManBehaviourEvent::Gossipsub(event) => match event {
                         libp2p::gossipsub::Event::Message { message, .. } => {
                             let topic = message.topic.clone();
                             let _ = self.sender.try_send(Message::NewMessage(topic, message));
@@ -158,7 +158,7 @@ impl TheManLogic {
                         }
                         libp2p::gossipsub::Event::GossipsubNotSupported { .. } => {}
                     },
-                    BehaviourEvent::AutoNat(event) => match event {
+                    TheManBehaviourEvent::Autonat(event) => match event {
                         libp2p::autonat::Event::InboundProbe(_event) => {
                             // println!("Inbount: {event:?}")
                         }
@@ -176,10 +176,10 @@ impl TheManLogic {
                             }
                         }
                     },
-                    BehaviourEvent::Relay(_event) => {
+                    TheManBehaviourEvent::Relay(_event) => {
                         // println!("Relay: {event:?}");
                     }
-                    BehaviourEvent::Ping(event) => {
+                    TheManBehaviourEvent::Ping(event) => {
                         if let Some(peer) = self.state.peers.get_mut(&event.peer) {
                             let ping = match event.result {
                                 Ok(ping) => Ok(crate::state::PingOk::Ping(
@@ -199,7 +199,7 @@ impl TheManLogic {
                             peer.ping = Some(ping);
                         }
                     }
-                    BehaviourEvent::TheMan(event) => {
+                    TheManBehaviourEvent::TheMan(event) => {
                         if let Some(account) = &mut self.state.account {
                             match event {
                                 the_man::network::event::BehaviourEvent::VoicePacket {

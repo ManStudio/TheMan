@@ -176,7 +176,6 @@ impl TheManState {
 }
 
 #[derive(NetworkBehaviour)]
-#[behaviour(out_event = "BehaviourEvent")]
 pub struct TheManBehaviour {
     pub kademlia: Kademlia<MemoryStore>,
     pub identify: libp2p::identify::Behaviour,
@@ -186,64 +185,4 @@ pub struct TheManBehaviour {
     pub relay: libp2p::relay::Behaviour,
     pub ping: libp2p::ping::Behaviour,
     pub the_man: the_man::network::TheManBehaviour,
-}
-
-#[derive(Debug)]
-pub enum BehaviourEvent {
-    Kademlia(KademliaEvent),
-    Identify(libp2p::identify::Event),
-    MDNS(libp2p::mdns::Event),
-    GossIpSub(libp2p::gossipsub::Event),
-    AutoNat(libp2p::autonat::Event),
-    Relay(libp2p::relay::Event),
-    Ping(libp2p::ping::Event),
-    TheMan(the_man::network::event::BehaviourEvent),
-}
-
-impl From<KademliaEvent> for BehaviourEvent {
-    fn from(value: KademliaEvent) -> Self {
-        Self::Kademlia(value)
-    }
-}
-
-impl From<libp2p::identify::Event> for BehaviourEvent {
-    fn from(value: libp2p::identify::Event) -> Self {
-        Self::Identify(value)
-    }
-}
-
-impl From<libp2p::mdns::Event> for BehaviourEvent {
-    fn from(value: libp2p::mdns::Event) -> Self {
-        Self::MDNS(value)
-    }
-}
-
-impl From<libp2p::gossipsub::Event> for BehaviourEvent {
-    fn from(value: libp2p::gossipsub::Event) -> Self {
-        Self::GossIpSub(value)
-    }
-}
-
-impl From<libp2p::autonat::Event> for BehaviourEvent {
-    fn from(value: libp2p::autonat::Event) -> Self {
-        Self::AutoNat(value)
-    }
-}
-
-impl From<libp2p::relay::Event> for BehaviourEvent {
-    fn from(value: libp2p::relay::Event) -> Self {
-        Self::Relay(value)
-    }
-}
-
-impl From<libp2p::ping::Event> for BehaviourEvent {
-    fn from(value: libp2p::ping::Event) -> Self {
-        Self::Ping(value)
-    }
-}
-
-impl From<the_man::network::event::BehaviourEvent> for BehaviourEvent {
-    fn from(value: the_man::network::event::BehaviourEvent) -> Self {
-        Self::TheMan(value)
-    }
 }
