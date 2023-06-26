@@ -159,11 +159,32 @@ async fn main() {
     {
         let mut app = TheMan::new(gui_logic_receiver, logic_gui_sender);
 
+        let mut repaint_after = None;
+
         event_loop.run_return(move |event, event_loop, control_flow| {
-            control_flow.set_wait();
             //
             match event {
-                winit::event::Event::NewEvents(event) => {}
+                winit::event::Event::NewEvents(event) => match event {
+                    winit::event::StartCause::ResumeTimeReached {
+                        start,
+                        requested_resume,
+                    } => {
+                        window.request_redraw();
+                        repaint_after = None;
+                    }
+                    winit::event::StartCause::WaitCancelled {
+                        start,
+                        requested_resume,
+                    } => {
+                        if let Some(requested_resume) = requested_resume {
+                            control_flow.set_wait_until(requested_resume);
+                        }
+                    }
+                    winit::event::StartCause::Poll => {}
+                    winit::event::StartCause::Init => {
+                        control_flow.set_wait();
+                    }
+                },
                 winit::event::Event::WindowEvent { window_id, event } => {
                     let res = egui_state.on_event(&egui_context, &event);
                     if !res.consumed {
@@ -187,7 +208,9 @@ async fn main() {
                 winit::event::Event::UserEvent(_) => {}
                 winit::event::Event::Suspended => {}
                 winit::event::Event::Resumed => {}
-                winit::event::Event::MainEventsCleared => app.process_events(),
+                winit::event::Event::MainEventsCleared => {
+                    app.process_events();
+                }
                 winit::event::Event::RedrawRequested(window_id) => {
                     unsafe {
                         gl.clear_color(0.0, 0.0, 0.0, 1.0);
@@ -211,8 +234,22 @@ async fn main() {
                         &egui_context,
                         output.platform_output,
                     );
-                    if output.repaint_after < std::time::Duration::from_secs(1) {
-                        window.request_redraw()
+                    if output.repaint_after < std::time::Duration::from_secs(1440) {
+                        if output.repaint_after > std::time::Duration::ZERO {
+                            if let Some(repaint_after) = &mut repaint_after {
+                                if *repaint_after > output.repaint_after {
+                                    *repaint_after = output.repaint_after;
+                                }
+                            } else {
+                                repaint_after = Some(output.repaint_after)
+                            }
+                        } else {
+                            window.request_redraw();
+                        }
+                    }
+
+                    if let Some(repaint_after) = &repaint_after {
+                        control_flow.set_wait_until(std::time::Instant::now() + *repaint_after);
                     }
                 }
                 winit::event::Event::RedrawEventsCleared => {}
