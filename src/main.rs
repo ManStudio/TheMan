@@ -14,6 +14,7 @@ use glutin_winit::{DisplayBuilder, GlWindow};
 use gui::TheMan;
 use libp2p::identity::Keypair;
 use logic::{message::Message, TheManLogic};
+use raw_window_handle::HasRawWindowHandle;
 use save_state::{Account, TheManSaveState};
 use state::TheManState;
 use winit::{
@@ -43,14 +44,16 @@ async fn main() {
         })
         .unwrap();
 
+    let window = window.unwrap();
     let display = config.display();
     let context = unsafe {
         display
-            .create_context(&config, &ContextAttributesBuilder::new().build(None))
+            .create_context(
+                &config,
+                &ContextAttributesBuilder::new().build(Some(window.raw_window_handle())),
+            )
             .unwrap()
     };
-
-    let window = window.unwrap();
 
     let window_attribs =
         window.build_surface_attributes(SurfaceAttributesBuilder::<WindowSurface>::new());
