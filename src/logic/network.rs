@@ -129,6 +129,11 @@ impl TheManLogic {
                     TheManBehaviourEvent::Identify(event) => {
                         match event {
                             libp2p::identify::Event::Received { peer_id, info } => {
+                                if let Some(account) = &mut self.state.account {
+                                    account
+                                        .swarm
+                                        .add_external_address(info.observed_addr.clone())
+                                }
                                 if let Some(peer) = self.state.peers.get_mut(&peer_id) {
                                     peer.info = Some(info);
                                 }
@@ -177,7 +182,7 @@ impl TheManLogic {
                         }
                     },
                     TheManBehaviourEvent::Relay(_event) => {
-                        // println!("Relay: {event:?}");
+                        println!("Relay: {_event:?}");
                     }
                     TheManBehaviourEvent::Ping(event) => {
                         if let Some(peer) = self.state.peers.get_mut(&event.peer) {
