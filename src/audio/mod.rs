@@ -102,6 +102,16 @@ impl Audio {
     pub async fn run(mut self) {
         self.host = Some(cpal::default_host());
 
+        if let Some(host) = &self.host {
+            let input_config = host.default_input_device().unwrap().default_input_config();
+            println!("Default Input Config: {input_config:?}");
+            let output_config = host
+                .default_output_device()
+                .unwrap()
+                .default_output_config();
+            println!("Default Output Config: {output_config:?}");
+        }
+
         self.try_get_default_devices();
 
         println!("Audio thread started!");
