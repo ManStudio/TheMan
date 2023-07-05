@@ -164,14 +164,20 @@ impl TheManLogic {
                         libp2p::gossipsub::Event::GossipsubNotSupported { .. } => {}
                     },
                     TheManBehaviourEvent::Autonat(event) => match event {
-                        libp2p::autonat::Event::InboundProbe(_event) => {
-                            // println!("Inbount: {event:?}")
+                        libp2p::autonat::Event::InboundProbe(event) => {
+                            println!("Inbount: {event:?}");
+                            if let Some(account) = &mut self.state.account {
+                                println!(
+                                    "NatStatus: {:?}",
+                                    account.swarm.behaviour().autonat.nat_status()
+                                );
+                            }
                         }
-                        libp2p::autonat::Event::OutboundProbe(_event) => {
-                            // println!("Outbound: {event:?}")
+                        libp2p::autonat::Event::OutboundProbe(event) => {
+                            println!("Outbound: {event:?}")
                         }
                         libp2p::autonat::Event::StatusChanged { new, .. } => {
-                            // println!("NatStatus: {new:?}");
+                            println!("NatStatus: {new:?}");
                             if let Some(account) = &mut self.state.account {
                                 println!("NatStatus: {new:?}");
                                 println!(
@@ -311,7 +317,13 @@ impl TheManLogic {
             libp2p::swarm::SwarmEvent::IncomingConnection { .. } => self.update_swarm_status(),
             libp2p::swarm::SwarmEvent::IncomingConnectionError { .. } => self.update_swarm_status(),
             libp2p::swarm::SwarmEvent::OutgoingConnectionError { .. } => self.update_swarm_status(),
-            libp2p::swarm::SwarmEvent::NewListenAddr { .. } => self.update_swarm_status(),
+            libp2p::swarm::SwarmEvent::NewListenAddr {
+                listener_id,
+                address,
+            } => {
+                println!("Listening: {address}, id: {listener_id:?}");
+                self.update_swarm_status();
+            }
             libp2p::swarm::SwarmEvent::ExpiredListenAddr { .. } => self.update_swarm_status(),
             libp2p::swarm::SwarmEvent::ListenerClosed { .. } => self.update_swarm_status(),
             libp2p::swarm::SwarmEvent::ListenerError { .. } => self.update_swarm_status(),

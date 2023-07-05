@@ -212,7 +212,7 @@ async fn main() {
                 winit::event::Event::Suspended => {}
                 winit::event::Event::Resumed => {}
                 winit::event::Event::MainEventsCleared => {
-                    app.process_events();
+                    // app.process_events();
                 }
                 winit::event::Event::RedrawRequested(window_id) => {
                     unsafe {

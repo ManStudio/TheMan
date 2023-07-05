@@ -9,8 +9,8 @@ use libp2p::{
     identity::Keypair,
     kad::{store::MemoryStore, Kademlia, KademliaConfig, KademliaEvent},
     multiaddr::Protocol,
-    swarm::{NetworkBehaviour, SwarmBuilder},
-    Multiaddr, PeerId, Swarm,
+    swarm::{derive_prelude::ListenerId, NetworkBehaviour, SwarmBuilder},
+    Multiaddr, PeerId, Swarm, Transport,
 };
 
 use crate::save_state::{Account, Friend};
@@ -122,7 +122,8 @@ impl TheManState {
         };
 
         let autonat = {
-            let config = libp2p::autonat::Config::default();
+            let mut config = libp2p::autonat::Config::default();
+            config.only_global_ips = false;
             libp2p::autonat::Behaviour::new(peer_id, config)
         };
 

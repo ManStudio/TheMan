@@ -190,13 +190,20 @@ impl TheManLogic {
 
                     let _ = account
                         .swarm
-                        .listen_on("/ip4/0.0.0.0/tcp/0".parse().unwrap());
+                        .listen_on("/ip4/0.0.0.0/tcp/40002".parse().unwrap());
 
                     let _ = account
                         .swarm
-                        .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap());
+                        .listen_on("/ip4/127.0.0.1/tcp/40002".parse().unwrap());
 
-                    let _ = account.swarm.listen_on("/ip6/::/tcp/0".parse().unwrap());
+                    let _ = account
+                        .swarm
+                        .listen_on("/ip6/::/tcp/40002".parse().unwrap());
+
+                    println!(
+                        "Listening: {:?}",
+                        account.swarm.listeners().collect::<Vec<&Multiaddr>>()
+                    );
 
                     if self.bootstraping {
                         self.bootstrap =
