@@ -130,9 +130,9 @@ impl TheManLogic {
                         match event {
                             libp2p::identify::Event::Received { peer_id, info } => {
                                 if let Some(account) = &mut self.state.account {
-                                    account
-                                        .swarm
-                                        .add_external_address(info.observed_addr.clone())
+                                    // account
+                                    //     .swarm
+                                    //     .add_external_address(info.observed_addr.clone())
                                 }
                                 if let Some(peer) = self.state.peers.get_mut(&peer_id) {
                                     peer.info = Some(info);
