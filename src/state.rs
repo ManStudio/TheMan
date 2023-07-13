@@ -64,6 +64,7 @@ impl TheManState {
             let mut cfg = KademliaConfig::default();
             cfg.set_query_timeout(Duration::from_secs(5 * 60));
             cfg.disjoint_query_paths(true);
+            cfg.set_connection_idle_timeout(Duration::from_secs(60 * 5));
             let store = MemoryStore::with_config(
                 peer_id,
                 libp2p::kad::store::MemoryStoreConfig {
