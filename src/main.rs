@@ -40,7 +40,7 @@ async fn main() {
     let (window, config) = DisplayBuilder::new()
         .with_window_builder(Some(WindowBuilder::new().with_title("TheMan")))
         .build(&event_loop, ConfigTemplateBuilder::new(), |mut configs| {
-            configs.last().unwrap()
+            configs.next().unwrap()
         })
         .unwrap();
 
@@ -235,7 +235,7 @@ async fn main() {
                     let PhysicalSize { width, height } = window.inner_size();
                     egui_painter.paint_and_update_textures(
                         [width, height],
-                        egui_winit::native_pixels_per_point(&window),
+                        1.0,
                         &primitives,
                         &output.textures_delta,
                     );
