@@ -219,7 +219,15 @@ async fn main() {
                         gl.clear_color(0.0, 0.0, 0.0, 1.0);
                         gl.clear(glow::COLOR_BUFFER_BIT);
                     }
-                    let raw_input = egui_state.take_egui_input(&window);
+                    let mut raw_input = egui_state.take_egui_input(&window);
+                    let size = window.inner_size();
+                    raw_input.screen_rect = Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::Vec2 {
+                            x: size.width as f32,
+                            y: size.height as f32,
+                        },
+                    ));
                     let output = egui_context.run(raw_input, |ctx| {
                         app.update(ctx);
                     });
