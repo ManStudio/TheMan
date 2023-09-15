@@ -40,7 +40,7 @@ async fn main() {
     let (window, config) = DisplayBuilder::new()
         .with_window_builder(Some(WindowBuilder::new().with_title("TheMan")))
         .build(&event_loop, ConfigTemplateBuilder::new(), |mut configs| {
-            configs.next().unwrap()
+            configs.last().unwrap()
         })
         .unwrap();
 
@@ -224,8 +224,8 @@ async fn main() {
                     raw_input.screen_rect = Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
                         egui::Vec2 {
-                            x: (size.width / 2) as f32,
-                            y: (size.height / 2) as f32,
+                            x: size.width as f32,
+                            y: size.height as f32,
                         },
                     ));
                     let output = egui_context.run(raw_input, |ctx| {
