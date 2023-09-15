@@ -194,7 +194,6 @@ async fn main() {
                         match event {
                             winit::event::WindowEvent::CloseRequested => control_flow.set_exit(),
                             winit::event::WindowEvent::Resized(new_size) => {
-                                println!("New Size: {new_size:?}");
                                 surface.resize(
                                     &context,
                                     new_size.width.try_into().unwrap(),
@@ -222,7 +221,6 @@ async fn main() {
                     }
                     let mut raw_input = egui_state.take_egui_input(&window);
                     let size = window.inner_size();
-                    println!("Dimension: {size:?}");
                     raw_input.screen_rect = Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
                         egui::Vec2 {
@@ -230,6 +228,8 @@ async fn main() {
                             y: size.height as f32,
                         },
                     ));
+                    println!("Pixel per point: {}", egui_context.pixels_per_point());
+                    egui_context.set_pixels_per_point(1.0);
                     let output = egui_context.run(raw_input, |ctx| {
                         app.update(ctx);
                     });
