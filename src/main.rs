@@ -196,8 +196,8 @@ async fn main() {
                             winit::event::WindowEvent::Resized(new_size) => {
                                 surface.resize(
                                     &context,
-                                    new_size.width.try_into().unwrap(),
-                                    new_size.height.try_into().unwrap(),
+                                    (new_size.width / 2).try_into().unwrap(),
+                                    (new_size.height / 2).try_into().unwrap(),
                                 );
                             }
                             _ => {}
@@ -228,8 +228,6 @@ async fn main() {
                             y: size.height as f32,
                         },
                     ));
-                    println!("Pixel per point: {}", egui_context.pixels_per_point());
-                    egui_context.set_pixels_per_point(1.0);
                     let output = egui_context.run(raw_input, |ctx| {
                         app.update(ctx);
                     });
