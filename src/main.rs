@@ -196,8 +196,8 @@ async fn main() {
                             winit::event::WindowEvent::Resized(new_size) => {
                                 surface.resize(
                                     &context,
-                                    (new_size.width / 2).try_into().unwrap(),
-                                    (new_size.height / 2).try_into().unwrap(),
+                                    new_size.width.try_into().unwrap(),
+                                    new_size.height.try_into().unwrap(),
                                 );
                             }
                             _ => {}
@@ -224,8 +224,8 @@ async fn main() {
                     raw_input.screen_rect = Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
                         egui::Vec2 {
-                            x: size.width as f32,
-                            y: size.height as f32,
+                            x: (size.width / 2) as f32,
+                            y: (size.height / 2) as f32,
                         },
                     ));
                     let output = egui_context.run(raw_input, |ctx| {
