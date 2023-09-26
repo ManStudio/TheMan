@@ -46,7 +46,7 @@ pub trait Tab {
 
 pub struct TabManager {
     pub registerd_tabs: Vec<Box<dyn Tab>>,
-    pub tabs: egui_dock::Tree<Box<dyn Tab>>,
+    pub state: egui_dock::DockState<Box<dyn Tab>>,
 }
 
 #[allow(clippy::new_without_default)]
@@ -54,7 +54,7 @@ impl TabManager {
     pub fn new() -> Self {
         Self {
             registerd_tabs: Vec::new(),
-            tabs: egui_dock::Tree::new(Vec::new()),
+            state: egui_dock::DockState::new(Vec::new()),
         }
     }
 
@@ -73,16 +73,22 @@ impl TabManager {
         for command in commands {
             let mut chars = command.chars().collect::<Vec<char>>();
             chars.reverse();
-            let Some(op) = chars.pop() else {continue};
+            let Some(op) = chars.pop() else { continue };
             match op {
                 'o' => {
                     chars.reverse();
                     let string = String::from_iter(chars);
                     let mut values = string.split(',');
                     let error_message = "After t should be tow numbers separate by , like: o0,";
-                    let Some(num_str) = values.next() else{eprintln!("{error_message}"); continue};
+                    let Some(num_str) = values.next() else {
+                        eprintln!("{error_message}");
+                        continue;
+                    };
                     let message = values.collect::<String>();
-                    let Ok(num) = num_str.parse::<usize>() else {eprintln!("{error_message}"); continue};
+                    let Ok(num) = num_str.parse::<usize>() else {
+                        eprintln!("{error_message}");
+                        continue;
+                    };
 
                     if message.is_empty() {
                         self.open(num, None);
@@ -92,19 +98,35 @@ impl TabManager {
                 }
                 'f' => {
                     chars.reverse();
-                    let Ok(num) = String::from_iter(chars).parse::<usize>()else{eprintln!("After o should be a number like: f10"); continue};
-                    self.tabs.set_focused_node(num.into());
+                    let Ok(num) = String::from_iter(chars).parse::<usize>() else {
+                        eprintln!("After o should be a number like: f10");
+                        continue;
+                    };
+                    // TODO:
+                    eprintln!("f tab instruction is to implemented");
                 }
                 't' => {
                     chars.reverse();
                     let string = String::from_iter(chars);
                     let mut values = string.split(',');
                     let message = "After t should be tow numbers separate by , like: t0,1";
-                    let Some(node_str) = values.next() else{eprintln!("{message}"); continue};
-                    let Some(tab_str) = values.next() else{eprintln!("{message}"); continue};
-                    let Ok(node) = node_str.parse::<usize>() else {eprintln!("{message}"); continue};
-                    let Ok(tab) = tab_str.parse::<usize>() else {eprintln!("{message}"); continue};
-                    self.tabs.set_active_tab(node.into(), tab.into());
+                    let Some(node_str) = values.next() else {
+                        eprintln!("{message}");
+                        continue;
+                    };
+                    let Some(tab_str) = values.next() else {
+                        eprintln!("{message}");
+                        continue;
+                    };
+                    let Ok(node) = node_str.parse::<usize>() else {
+                        eprintln!("{message}");
+                        continue;
+                    };
+                    let Ok(tab) = tab_str.parse::<usize>() else {
+                        eprintln!("{message}");
+                        continue;
+                    };
+                    // self.tabs.set_active_tab(node.into(), tab.into());
                 }
                 _ => continue,
             }
@@ -112,9 +134,12 @@ impl TabManager {
     }
 
     pub fn open(&mut self, registered_tab: usize, message: Option<String>) {
-        let Some(tab) = self.registerd_tabs.get(registered_tab) else {eprintln!("Invalid registered tab index!"); return};
+        let Some(tab) = self.registerd_tabs.get(registered_tab) else {
+            eprintln!("Invalid registered tab index!");
+            return;
+        };
         let mut used_ids = Vec::new();
-        self.tabs
+        self.state
             .iter()
             .flat_map(|node| {
                 if let egui_dock::Node::Leaf { tabs, .. } = node {
@@ -137,12 +162,12 @@ impl TabManager {
         if let Some(message) = message {
             tab.recive(message)
         }
-        self.tabs.push_to_focused_leaf(tab);
+        self.state.push_to_focused_leaf(tab);
     }
 
     pub fn ui(&mut self, ctx: &egui::Context, state: &mut TheManGuiState) {
-        if self.tabs.is_empty() {
-            self.open(13, None)
+        if self.state.main_surface().is_empty() {
+            self.open(13, None);
         }
 
         let mut tab_viewer = TabViewer {
@@ -162,7 +187,7 @@ impl TabManager {
         let mut style = egui_dock::Style::from_egui(ctx.style().as_ref());
         style.separator.width = 3.0;
 
-        egui_dock::DockArea::new(&mut self.tabs)
+        egui_dock::DockArea::new(&mut self.state)
             .style(style)
             .show_add_buttons(true)
             .show_add_popup(true)
@@ -176,7 +201,7 @@ impl TabManager {
         }
 
         for (tab, index) in added_tabs {
-            self.tabs.set_focused_node(index);
+            // self.tabs.set_focused_node(index);
             self.open(tab, None)
         }
     }
@@ -202,7 +227,12 @@ impl<'a> egui_dock::TabViewer for TabViewer<'a> {
         format!("{} {}", tab.name(), tab.id()).into()
     }
 
-    fn add_popup(&mut self, ui: &mut egui::Ui, node: egui_dock::NodeIndex) {
+    fn add_popup(
+        &mut self,
+        ui: &mut egui::Ui,
+        _surface: egui_dock::SurfaceIndex,
+        node: egui_dock::NodeIndex,
+    ) {
         ui.style_mut().visuals.button_frame = false;
         ui.set_min_width(100.0);
 

@@ -76,7 +76,7 @@ impl TheMan {
         tab_manager.register::<TabAbout>(); //13
         tab_manager.register::<TabPeer>(); // 14
 
-        tab_manager.execute("o0;o1;o2;o3;o4;o13");
+        tab_manager.execute("o13;");
 
         Self {
             state: TheManGuiState {
