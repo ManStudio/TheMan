@@ -1,55 +1,19 @@
 use base64::prelude::*;
 use iroh::{protocol::Router, NodeId};
-use iroh_blobs::ticket::BlobTicket;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use protocol::{RawConversation, Ticket};
+use serde::{de::DeserializeOwned, Serialize};
 use tokio::{io::AsyncReadExt, select};
 use tracing::info;
 
-use chrono::Utc;
-pub type Time = chrono::DateTime<chrono::Utc>;
-
 pub mod protocol;
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct RawMessage {
-    last: Option<BlobTicket>,
-    time: Time,
-    conversation: BlobTicket,
-    data: String,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Message {
-    raw: RawMessage,
-    ticket: BlobTicket,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct RawConversation {
-    peers: Vec<NodeId>,
-    time: Time,
-}
-
-impl RawConversation {
-    pub fn new(peers: impl Into<Vec<NodeId>>) -> Self {
-        Self {
-            peers: peers.into(),
-            time: Utc::now(),
-        }
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Conversation {
-    raw: RawConversation,
-    ticket: BlobTicket,
-    messages: Vec<Message>,
-}
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive("the_man=trace".parse().unwrap()),
+        )
         .init();
 
     let endpoint = iroh::Endpoint::builder()
@@ -138,15 +102,7 @@ async fn handle_cli(
 
                 println!("Connecting to: {next}");
 
-                match node.endpoint().connect(node_id, protocol::ALPN).await {
-                    Ok(conn) => {
-                        the_man.join(vec![node_id]).await;
-                        println!("Connected to {next} with {}", conn.remote_address());
-                    }
-                    Err(err) => {
-                        println!("Cannot connect to: {next}, error: {err}");
-                    }
-                }
+                the_man.connect(node_id).await;
             }
             "info" => {
                 for info in node.endpoint().remote_info_iter() {
@@ -159,22 +115,22 @@ async fn handle_cli(
                     return false;
                 };
 
-                let mut peers = Vec::default();
+                let mut nodes = Vec::default();
                 for (i, res) in next
                     .split(' ')
                     .map(base64_deserialize::<NodeId>)
                     .enumerate()
                 {
                     if let Ok(node_id) = res {
-                        peers.push(node_id);
+                        nodes.push(node_id);
                     } else {
                         println!("Cannot parse node_id at position: {i}");
                     }
                 }
 
-                peers.push(node.endpoint().node_id());
+                nodes.push(node.endpoint().node_id());
 
-                let Some(handle) = the_man.create(RawConversation::new(peers)).await else {
+                let Some(handle) = the_man.create(RawConversation::new(nodes)).await else {
                     eprintln!("Cannot create conversation");
                     return false;
                 };
@@ -198,10 +154,10 @@ async fn handle_cli(
                             base64_serialize(&conversation.ticket.hash()).unwrap()
                         );
                         println!(
-                            "\tPeers: {}",
+                            "\tNodes: {}",
                             conversation
                                 .raw
-                                .peers
+                                .nodes
                                 .iter()
                                 .fold(String::default(), |mut acc, peer| {
                                     acc.push_str(&base64_serialize(peer).unwrap());
@@ -229,7 +185,7 @@ async fn handle_cli(
                     println!("Ticket: {}", base64_serialize(&message.ticket).unwrap());
                     println!(
                         "\tFrom: {}",
-                        base64_serialize(&message.ticket.node_addr().node_id).unwrap()
+                        base64_serialize(&message.ticket.owner_id).unwrap()
                     );
                     println!(
                         "\tTime: {} : {}",
@@ -268,12 +224,12 @@ async fn handle_cli(
                     return false;
                 };
 
-                let Ok(message_ticket) = base64_deserialize::<BlobTicket>(next) else {
+                let Ok(ticket) = base64_deserialize::<Ticket>(next) else {
                     println!("Cannot parse conversation id");
                     return false;
                 };
 
-                the_man.recover(message_ticket).await;
+                the_man.recover(ticket).await;
             }
             _ => println!("Invalid command: {command}"),
         }

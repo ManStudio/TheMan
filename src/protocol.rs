@@ -1,46 +1,122 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use chrono::Utc;
+use ed25519::Signature;
 use futures_lite::{future::Boxed, StreamExt};
-use iroh::{protocol::ProtocolHandler, Endpoint, NodeId};
+use iroh::{
+    endpoint::{self, Connection},
+    protocol::ProtocolHandler,
+    Endpoint, NodeAddr, NodeId, SecretKey,
+};
 use iroh_blobs::{
     downloader::DownloadRequest,
     net_protocol::Blobs,
     store::{bao_tree::blake3, Store},
-    ticket::BlobTicket,
     util::local_pool::LocalPoolHandle,
-    Hash, HashAndFormat,
+    BlobFormat, Hash, HashAndFormat,
 };
 use iroh_gossip::{
     net::{Gossip, GossipReceiver, GossipSender},
     proto::TopicId,
 };
-use tokio::sync::{
-    mpsc::{Receiver, Sender},
-    oneshot, RwLock,
+use serde::{Deserialize, Serialize};
+use tokio::{
+    sync::{
+        mpsc::{Receiver, Sender},
+        oneshot, Mutex, RwLock,
+    },
+    task::JoinHandle,
 };
 use tracing::{debug, error, info};
 
-use crate::{base64_serialize, RawConversation, RawMessage};
+pub type Time = chrono::DateTime<chrono::Utc>;
+
+use crate::base64_serialize;
+
+#[derive(Serialize, Deserialize)]
+pub struct Signed {
+    sign: Signature,
+    bytes: Vec<u8>,
+}
+
+impl Signed {
+    pub fn new(secret: &SecretKey, bytes: Vec<u8>) -> Self {
+        let sign = secret.sign(&bytes);
+        Self { sign, bytes }
+    }
+
+    pub fn get(&self, node_id: &NodeId) -> Result<&[u8], ed25519::signature::Error> {
+        node_id.verify(&self.bytes, &self.sign)?;
+        Ok(&self.bytes)
+    }
+}
 
 pub const ALPN: &[u8] = b"the-man";
 
-#[derive(Debug, Clone)]
-pub struct TheMan<S: Store> {
-    inner: Arc<Inner<S>>,
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Ticket {
+    pub owner_id: NodeId,
+    pub nodes: Vec<NodeAddr>,
+    pub hash_and_format: HashAndFormat,
+}
+
+impl Ticket {
+    pub fn hash(&self) -> Hash {
+        self.hash_and_format.hash
+    }
+
+    pub fn format(&self) -> BlobFormat {
+        self.hash_and_format.format
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RawMessage {
+    pub last: Option<Ticket>,
+    pub time: Time,
+    pub conversation: Ticket,
+    pub data: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RawConversation {
+    pub nodes: Vec<NodeId>,
+    pub time: Time,
+}
+
+impl RawConversation {
+    pub fn new(nodes: impl Into<Vec<NodeId>>) -> Self {
+        Self {
+            nodes: nodes.into(),
+            time: Utc::now(),
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct Conversation {
     pub raw: RawConversation,
-    pub ticket: BlobTicket,
-    pub tails: Vec<BlobTicket>,
+    pub ticket: Ticket,
+    pub tails: Vec<Ticket>,
 }
 
 #[derive(Clone)]
 pub struct Message {
     pub raw: RawMessage,
-    pub ticket: BlobTicket,
+    pub ticket: Ticket,
+}
+
+enum ServiceRequest {
+    Create(RawConversation, oneshot::Sender<Option<Hash>>),
+    List(oneshot::Sender<Vec<Hash>>),
+    GetMessage(Hash, oneshot::Sender<Option<Message>>),
+    GetConversation(Hash, oneshot::Sender<Option<Conversation>>),
+    Send(Hash, RawMessage, oneshot::Sender<Option<Hash>>),
+    Recover(Ticket),
+    Join(Vec<NodeId>),
 }
 
 struct TheManService {
@@ -56,20 +132,10 @@ struct TheManService {
     conversations: HashMap<Hash, Conversation>,
 }
 
-enum ServiceRequest {
-    Create(RawConversation, oneshot::Sender<Option<Hash>>),
-    List(oneshot::Sender<Vec<Hash>>),
-    GetMessage(Hash, oneshot::Sender<Option<Message>>),
-    GetConversation(Hash, oneshot::Sender<Option<Conversation>>),
-    Send(Hash, RawMessage, oneshot::Sender<Option<Hash>>),
-    Recover(BlobTicket),
-    Join(Vec<NodeId>),
-}
-
 impl TheManService {
     pub async fn run(&mut self) {
         loop {
-            let mut messages_to_add = Vec::<BlobTicket>::new();
+            let mut messages_to_add = Vec::<Ticket>::new();
 
             tokio::select! {
                 Ok(Some(event)) = self.gossip_recv.try_next() => {
@@ -84,7 +150,7 @@ impl TheManService {
                 }
             }
 
-            let mut conversations_to_add = Vec::<BlobTicket>::new();
+            let mut conversations_to_add = Vec::<Ticket>::new();
 
             while !(messages_to_add.is_empty() && conversations_to_add.is_empty()) {
                 for ticket in std::mem::take(&mut conversations_to_add) {
@@ -96,7 +162,23 @@ impl TheManService {
                         continue;
                     };
 
-                    let Ok(raw) = bincode::deserialize::<RawConversation>(&bytes) else {
+                    let Ok(signed) = bincode::deserialize::<Signed>(&bytes) else {
+                        error!(
+                            "Cannot parse signed conversation: {}",
+                            base64_serialize(&ticket.hash()).unwrap()
+                        );
+                        continue;
+                    };
+
+                    let Ok(bytes) = signed.get(&ticket.owner_id) else {
+                        error!(
+                            "Cannot verify signiture of conversation: {}",
+                            base64_serialize(&ticket.hash()).unwrap()
+                        );
+                        continue;
+                    };
+
+                    let Ok(raw) = bincode::deserialize::<RawConversation>(bytes) else {
                         error!(
                             "Cannot parse conversation: {}",
                             base64_serialize(&ticket.hash()).unwrap()
@@ -123,7 +205,23 @@ impl TheManService {
                         continue;
                     };
 
-                    let Ok(raw) = bincode::deserialize::<RawMessage>(&bytes) else {
+                    let Ok(signed) = bincode::deserialize::<Signed>(&bytes) else {
+                        error!(
+                            "Cannot parse signed message: {}",
+                            base64_serialize(&ticket.hash()).unwrap()
+                        );
+                        continue;
+                    };
+
+                    let Ok(bytes) = signed.get(&ticket.owner_id) else {
+                        error!(
+                            "Cannot verify signiture of message: {}",
+                            base64_serialize(&ticket.hash()).unwrap()
+                        );
+                        continue;
+                    };
+
+                    let Ok(raw) = bincode::deserialize::<RawMessage>(bytes) else {
                         error!(
                             "Cannot parse message: {}",
                             base64_serialize(&ticket.hash()).unwrap()
@@ -138,9 +236,9 @@ impl TheManService {
                         continue;
                     };
 
-                    if !conversation.raw.peers.contains(&ticket.node_addr().node_id) {
+                    if !conversation.raw.nodes.contains(&ticket.owner_id) {
                         debug!("Some body send a message in a conversation that is not part of, peer_id: {}, conversation: {}, message_ticket: {}",
-                                base64_serialize(&ticket.node_addr().node_id).unwrap(),
+                                base64_serialize(&ticket.owner_id).unwrap(),
                                 base64_serialize(&raw.conversation.hash()).unwrap(),
                                 base64_serialize(&ticket).unwrap()
                             );
@@ -168,12 +266,12 @@ impl TheManService {
         }
     }
 
-    pub async fn download(&self, ticket: &BlobTicket) -> Option<bytes::Bytes> {
+    pub async fn download(&self, ticket: &Ticket) -> Option<bytes::Bytes> {
         let handle = self
             .downloader
             .queue(DownloadRequest::new(
                 HashAndFormat::new(ticket.hash(), ticket.format()),
-                [ticket.node_addr().clone()],
+                ticket.nodes.clone(),
             ))
             .await;
 
@@ -211,7 +309,7 @@ impl TheManService {
     pub async fn handle_request(
         &mut self,
         request: ServiceRequest,
-        messages_to_add: &mut Vec<BlobTicket>,
+        messages_to_add: &mut Vec<Ticket>,
     ) {
         match request {
             ServiceRequest::Create(raw_conversation, sender) => {
@@ -225,6 +323,9 @@ impl TheManService {
                     return;
                 };
 
+                let bytes =
+                    bincode::serialize(&Signed::new(self.endpoint.secret_key(), bytes)).unwrap();
+
                 let Ok(res) = self.blobs.add_bytes(bytes).await else {
                     error!("Cannot add bytes");
                     if sender.send(None).is_err() {
@@ -233,12 +334,13 @@ impl TheManService {
                     return;
                 };
 
-                let Ok(ticket) = BlobTicket::new(node_addr, res.hash, res.format) else {
-                    error!("Cannot create ticket");
-                    if sender.send(None).is_err() {
-                        error!("Cannot send");
-                    }
-                    return;
+                let ticket = Ticket {
+                    owner_id: node_addr.node_id,
+                    nodes: vec![node_addr],
+                    hash_and_format: HashAndFormat {
+                        hash: res.hash,
+                        format: res.format,
+                    },
                 };
 
                 self.conversations.insert(
@@ -317,6 +419,9 @@ impl TheManService {
                     return;
                 };
 
+                let bytes =
+                    bincode::serialize(&Signed::new(self.endpoint.secret_key(), bytes)).unwrap();
+
                 let Ok(res) = self.blobs.add_bytes(bytes).await else {
                     error!("Cannot add message as blob");
                     if sender.send(None).is_err() {
@@ -325,12 +430,13 @@ impl TheManService {
                     return;
                 };
 
-                let Ok(ticket) = BlobTicket::new(node_addr, res.hash, res.format) else {
-                    error!("Cannot create ticket");
-                    if sender.send(None).is_err() {
-                        error!("Cannot send");
-                    }
-                    return;
+                let ticket = Ticket {
+                    owner_id: node_addr.node_id,
+                    nodes: vec![node_addr],
+                    hash_and_format: HashAndFormat {
+                        hash: res.hash,
+                        format: res.format,
+                    },
                 };
 
                 let Ok(bytes) = bincode::serialize(&ticket) else {
@@ -367,8 +473,8 @@ impl TheManService {
                     error!("Cannot send");
                 }
             }
-            ServiceRequest::Recover(blob_ticket) => {
-                messages_to_add.push(blob_ticket);
+            ServiceRequest::Recover(ticket) => {
+                messages_to_add.push(ticket);
             }
             ServiceRequest::Join(peers) => {
                 if let Err(err) = self.gossip_sender.join_peers(peers).await {
@@ -381,7 +487,7 @@ impl TheManService {
     pub async fn handle_gossip(
         &mut self,
         event: iroh_gossip::net::Event,
-        messages_to_add: &mut Vec<BlobTicket>,
+        messages_to_add: &mut Vec<Ticket>,
     ) {
         let iroh_gossip::net::Event::Gossip(event) = event else {
             info!("gossip Lagged");
@@ -399,7 +505,7 @@ impl TheManService {
                 println!("NeighborDown: {public_key}");
             }
             iroh_gossip::net::GossipEvent::Received(message) => {
-                match bincode::deserialize::<BlobTicket>(&message.content) {
+                match bincode::deserialize::<Ticket>(&message.content) {
                     Err(err) => println!("Error when parsing topic event: {err}"),
                     Ok(message_ticket) => {
                         messages_to_add.push(message_ticket);
@@ -411,7 +517,7 @@ impl TheManService {
 }
 
 pub struct ConversationHandle<S: Store> {
-    inner: TheMan<S>,
+    inner: Arc<Inner<S>>,
     hash: Hash,
 }
 
@@ -513,6 +619,79 @@ impl<S: Store> ConversationHandle<S> {
     }
 }
 
+#[derive(Debug)]
+struct Inner<S: Store> {
+    pub sender: RwLock<Option<Sender<ServiceRequest>>>,
+    #[allow(unused)]
+    pub blobs: Blobs<S>,
+    connections: RwLock<BTreeMap<NodeId, Connection>>,
+    watch_tasts: Mutex<Vec<JoinHandle<()>>>,
+    endpoint: Endpoint,
+}
+
+impl<S: Store> Inner<S> {
+    async fn send(&self, request: ServiceRequest) {
+        let Some(sender) = &*self.sender.read().await else {
+            error!("Cannot grab sender");
+            return;
+        };
+
+        if let Err(err) = sender.send(request).await {
+            error!("Cannot send request to Service: {err}");
+        }
+    }
+
+    async fn add_connection(self: &Arc<Self>, connection: Connection) {
+        let mut connections = self.connections.write().await;
+        let Ok(node_id) = endpoint::get_remote_node_id(&connection) else {
+            error!("Cannot get connection node_id");
+            return;
+        };
+        info!("Connected to {}", base64_serialize(&node_id).unwrap());
+        connections.insert(node_id, connection.clone());
+        {
+            let conn = connection.clone();
+            let inner = self.clone();
+
+            let handle = tokio::spawn(async move {
+                conn.closed().await;
+                info!("Disconnected from: {}", base64_serialize(&node_id).unwrap());
+
+                inner.connections.write().await.remove(&node_id);
+
+                inner.refresh().await;
+            });
+
+            self.watch_tasts.lock().await.push(handle);
+        }
+
+        {
+            self.watch_tasts
+                .lock()
+                .await
+                .retain(|task| !task.is_finished());
+        }
+        drop(connections);
+        self.refresh().await;
+    }
+
+    async fn refresh(&self) {
+        let nodes_ids = self
+            .connections
+            .read()
+            .await
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        self.send(ServiceRequest::Join(nodes_ids)).await;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TheMan<S: Store> {
+    inner: Arc<Inner<S>>,
+}
+
 impl<S: Store> TheMan<S> {
     pub async fn spawn(
         gossip: Gossip,
@@ -526,6 +705,7 @@ impl<S: Store> TheMan<S> {
 
         {
             let blobs = blobs.clone();
+            let endpoint = endpoint.clone();
             local_pool.spawn_detached(move || async move {
                 TheManService {
                     receiver,
@@ -546,30 +726,33 @@ impl<S: Store> TheMan<S> {
             inner: Arc::new(Inner {
                 sender: RwLock::new(Some(sender)),
                 blobs,
+                connections: RwLock::default(),
+                endpoint,
+                watch_tasts: Mutex::default(),
             }),
         }
     }
 
     pub async fn create(&self, raw: RawConversation) -> Option<ConversationHandle<S>> {
         let (s, r) = oneshot::channel();
-        self.send(ServiceRequest::Create(raw, s)).await;
+        self.inner.send(ServiceRequest::Create(raw, s)).await;
         let hash = r.await.ok().flatten()?;
 
         Some(ConversationHandle {
-            inner: self.clone(),
+            inner: self.inner.clone(),
             hash,
         })
     }
 
     pub async fn conversations(&self) -> Option<Vec<ConversationHandle<S>>> {
         let (s, r) = oneshot::channel();
-        self.send(ServiceRequest::List(s)).await;
+        self.inner.send(ServiceRequest::List(s)).await;
         let hashes = r.await.ok()?;
         Some(
             hashes
                 .into_iter()
                 .map(|hash| ConversationHandle {
-                    inner: self.clone(),
+                    inner: self.inner.clone(),
                     hash,
                 })
                 .collect::<Vec<_>>(),
@@ -578,51 +761,53 @@ impl<S: Store> TheMan<S> {
 
     pub async fn get_conversation(&self, hash: Hash) -> Option<ConversationHandle<S>> {
         let (s, r) = oneshot::channel();
-        self.send(ServiceRequest::GetConversation(hash, s)).await;
+        self.inner
+            .send(ServiceRequest::GetConversation(hash, s))
+            .await;
 
         let _ = r.await.ok().flatten()?;
 
         Some(ConversationHandle {
-            inner: self.clone(),
+            inner: self.inner.clone(),
             hash,
         })
     }
 
-    pub async fn recover(&self, ticket: BlobTicket) {
-        self.send(ServiceRequest::Recover(ticket)).await;
+    pub async fn recover(&self, ticket: Ticket) {
+        for node_id in ticket.nodes.iter() {
+            self.connect(node_id.node_id).await;
+        }
+        self.inner.send(ServiceRequest::Recover(ticket)).await;
     }
 
-    pub async fn join(&self, peers: Vec<NodeId>) {
-        self.send(ServiceRequest::Join(peers)).await;
-    }
-
-    async fn send(&self, request: ServiceRequest) {
-        let Some(sender) = &*self.inner.sender.read().await else {
-            error!("Cannot grab sender");
+    pub async fn connect(&self, node_id: NodeId) {
+        info!("Connecting to: {}", base64_serialize(&node_id).unwrap());
+        let Ok(conn) = self.inner.endpoint.connect(node_id, ALPN).await else {
+            error!("Cannot connect to: {}", base64_serialize(&node_id).unwrap());
             return;
         };
 
-        if let Err(err) = sender.send(request).await {
-            error!("Cannot send request to Service: {err}");
-        }
+        self.inner.add_connection(conn).await;
     }
 }
 
-#[derive(Debug)]
-struct Inner<S: Store> {
-    pub sender: RwLock<Option<Sender<ServiceRequest>>>,
-    #[allow(unused)]
-    pub blobs: Blobs<S>,
-}
-
 impl<S: Store> ProtocolHandler for TheMan<S> {
-    fn accept(&self, _conn: iroh::endpoint::Connecting) -> Boxed<anyhow::Result<()>> {
-        Box::pin(async move { Ok(()) })
+    fn accept(&self, connection: iroh::endpoint::Connecting) -> Boxed<anyhow::Result<()>> {
+        let inner = self.inner.clone();
+        Box::pin(async move {
+            inner.add_connection(connection.await?).await;
+
+            Ok(())
+        })
     }
 
     fn shutdown(&self) -> Boxed<()> {
         let inner = self.inner.clone();
         Box::pin(async move {
+            let mut connections = inner.connections.write().await;
+            let connections = std::mem::take(&mut *connections);
+            drop(connections);
+
             inner.sender.write().await.take();
         })
     }
