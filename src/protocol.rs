@@ -231,7 +231,11 @@ impl TheManService {
 
                     let Some(conversation) = self.conversations.get_mut(&raw.conversation.hash())
                     else {
-                        conversations_to_add.push(raw.conversation.clone());
+                        let mut conversation_ticket = raw.conversation.clone();
+                        conversation_ticket
+                            .nodes
+                            .extend(ticket.nodes.iter().cloned());
+                        conversations_to_add.push(conversation_ticket);
                         messages_to_add.push(ticket);
                         continue;
                     };
@@ -248,11 +252,17 @@ impl TheManService {
 
                     if let Some(last) = raw.last.clone() {
                         if !self.messages.contains_key(&last.hash()) {
-                            messages_to_add.push(last);
+                            let mut last_ticket = last.clone();
+                            last_ticket.nodes.extend(ticket.nodes.iter().cloned());
+                            messages_to_add.push(last_ticket);
                             messages_to_add.push(ticket);
                             continue;
                         }
-                        if let Some(index) = conversation.tails.iter().position(|m| *m == last) {
+                        if let Some(index) = conversation
+                            .tails
+                            .iter()
+                            .position(|m| m.hash() == last.hash())
+                        {
                             conversation.tails[index] = ticket.clone();
                             self.messages.insert(ticket.hash(), Message { raw, ticket });
                             continue;
