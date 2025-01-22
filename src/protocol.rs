@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{
     sync::{
         mpsc::{Receiver, Sender},
-        oneshot, Mutex, RwLock,
+        oneshot, watch, Mutex, RwLock,
     },
     task::JoinHandle,
 };
@@ -73,7 +73,7 @@ impl Ticket {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawMessage {
     pub last: Option<Ticket>,
     pub time: Time,
@@ -103,23 +103,25 @@ pub struct Conversation {
     pub tails: Vec<Ticket>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Message {
     pub raw: RawMessage,
     pub ticket: Ticket,
 }
 
-enum ServiceRequest {
+pub enum ServiceRequest {
     Create(RawConversation, oneshot::Sender<Option<Hash>>),
     List(oneshot::Sender<Vec<Hash>>),
     GetMessage(Hash, oneshot::Sender<Option<Message>>),
     GetConversation(Hash, oneshot::Sender<Option<Conversation>>),
-    Send(Hash, RawMessage, oneshot::Sender<Option<Hash>>),
+    Send(RawMessage, oneshot::Sender<Option<Hash>>),
     Recover(Ticket),
     Join(Vec<NodeId>),
+    RequestMessageSubscription(oneshot::Sender<watch::Receiver<Option<Message>>>),
 }
 
 struct TheManService {
+    message_sender: watch::Sender<Option<Message>>,
     receiver: Receiver<ServiceRequest>,
     gossip_recv: GossipReceiver,
     gossip_sender: GossipSender,
@@ -264,13 +266,17 @@ impl TheManService {
                             .position(|m| m.hash() == last.hash())
                         {
                             conversation.tails[index] = ticket.clone();
-                            self.messages.insert(ticket.hash(), Message { raw, ticket });
+                            let message = Message { raw, ticket };
+                            self.messages.insert(message.ticket.hash(), message.clone());
+                            _ = self.message_sender.send(Some(message));
                             continue;
                         }
                     }
 
                     conversation.tails.push(ticket.clone());
-                    self.messages.insert(ticket.hash(), Message { raw, ticket });
+                    let message = Message { raw, ticket };
+                    self.messages.insert(message.ticket.hash(), message.clone());
+                    _ = self.message_sender.send(Some(message));
                 }
             }
         }
@@ -399,8 +405,10 @@ impl TheManService {
                     return;
                 };
             }
-            ServiceRequest::Send(hash, raw_message, sender) => {
-                let Some(conversation) = self.conversations.get_mut(&hash) else {
+            ServiceRequest::Send(raw_message, sender) => {
+                let Some(conversation) =
+                    self.conversations.get_mut(&raw_message.conversation.hash())
+                else {
                     error!("Cannot find conversation");
                     if sender.send(None).is_err() {
                         error!("Cannot send");
@@ -491,6 +499,11 @@ impl TheManService {
                     error!("Cannot join: {err}");
                 }
             }
+            ServiceRequest::RequestMessageSubscription(sender) => {
+                if let Err(err) = sender.send(self.message_sender.subscribe()) {
+                    error!("Cannot send subscription receiver! {err:?}");
+                }
+            }
         }
     }
 
@@ -539,7 +552,7 @@ impl<S: Store> ConversationHandle<S> {
     pub async fn get(&self) -> Conversation {
         let (s, r) = oneshot::channel();
         self.inner
-            .send(ServiceRequest::GetConversation(self.hash, s))
+            .send_request(ServiceRequest::GetConversation(self.hash, s))
             .await;
 
         r.await.unwrap().unwrap()
@@ -551,7 +564,7 @@ impl<S: Store> ConversationHandle<S> {
         for ticket in conversation.tails.iter() {
             let (s, r) = oneshot::channel();
             self.inner
-                .send(ServiceRequest::GetMessage(ticket.hash(), s))
+                .send_request(ServiceRequest::GetMessage(ticket.hash(), s))
                 .await;
             let msg = r.await.unwrap().unwrap();
             messages.push(msg);
@@ -566,7 +579,7 @@ impl<S: Store> ConversationHandle<S> {
                 if !messages.iter().any(|m| m.ticket == last) {
                     let (s, r) = oneshot::channel();
                     self.inner
-                        .send(ServiceRequest::GetMessage(last.hash(), s))
+                        .send_request(ServiceRequest::GetMessage(last.hash(), s))
                         .await;
                     let msg = r.await.unwrap().unwrap();
                     messages.push(msg);
@@ -586,7 +599,7 @@ impl<S: Store> ConversationHandle<S> {
         for ticket in conversation.tails.iter() {
             let (s, r) = oneshot::channel();
             self.inner
-                .send(ServiceRequest::GetMessage(ticket.hash(), s))
+                .send_request(ServiceRequest::GetMessage(ticket.hash(), s))
                 .await;
             let msg = r.await.unwrap().unwrap();
             messages.push(msg);
@@ -597,8 +610,7 @@ impl<S: Store> ConversationHandle<S> {
         let (s, r) = oneshot::channel();
         if let Some(message) = messages.last() {
             self.inner
-                .send(ServiceRequest::Send(
-                    conversation.ticket.hash(),
+                .send_request(ServiceRequest::Send(
                     RawMessage {
                         last: Some(message.ticket.clone()),
                         time: Utc::now(),
@@ -610,8 +622,7 @@ impl<S: Store> ConversationHandle<S> {
                 .await;
         } else {
             self.inner
-                .send(ServiceRequest::Send(
-                    conversation.ticket.hash(),
+                .send_request(ServiceRequest::Send(
                     RawMessage {
                         last: None,
                         time: Utc::now(),
@@ -640,7 +651,7 @@ struct Inner<S: Store> {
 }
 
 impl<S: Store> Inner<S> {
-    async fn send(&self, request: ServiceRequest) {
+    async fn send_request(&self, request: ServiceRequest) {
         let Some(sender) = &*self.sender.read().await else {
             error!("Cannot grab sender");
             return;
@@ -693,7 +704,7 @@ impl<S: Store> Inner<S> {
             .keys()
             .copied()
             .collect::<Vec<_>>();
-        self.send(ServiceRequest::Join(nodes_ids)).await;
+        self.send_request(ServiceRequest::Join(nodes_ids)).await;
     }
 }
 
@@ -726,9 +737,12 @@ impl<S: Store> TheMan<S> {
                     messages: HashMap::default(),
                     conversations: HashMap::default(),
                     endpoint,
+                    message_sender: watch::Sender::new(None),
                 }
                 .run()
                 .await;
+
+                info!("TheMan Service stopped!");
             });
         }
 
@@ -745,7 +759,9 @@ impl<S: Store> TheMan<S> {
 
     pub async fn create(&self, raw: RawConversation) -> Option<ConversationHandle<S>> {
         let (s, r) = oneshot::channel();
-        self.inner.send(ServiceRequest::Create(raw, s)).await;
+        self.inner
+            .send_request(ServiceRequest::Create(raw, s))
+            .await;
         let hash = r.await.ok().flatten()?;
 
         Some(ConversationHandle {
@@ -754,12 +770,16 @@ impl<S: Store> TheMan<S> {
         })
     }
 
-    pub async fn conversations(&self) -> Option<Vec<ConversationHandle<S>>> {
+    pub async fn raw_conversations(&self) -> Option<Vec<Hash>> {
         let (s, r) = oneshot::channel();
-        self.inner.send(ServiceRequest::List(s)).await;
-        let hashes = r.await.ok()?;
+        self.inner.send_request(ServiceRequest::List(s)).await;
+        r.await.ok()
+    }
+
+    pub async fn conversations(&self) -> Option<Vec<ConversationHandle<S>>> {
         Some(
-            hashes
+            self.raw_conversations()
+                .await?
                 .into_iter()
                 .map(|hash| ConversationHandle {
                     inner: self.inner.clone(),
@@ -772,7 +792,7 @@ impl<S: Store> TheMan<S> {
     pub async fn get_conversation(&self, hash: Hash) -> Option<ConversationHandle<S>> {
         let (s, r) = oneshot::channel();
         self.inner
-            .send(ServiceRequest::GetConversation(hash, s))
+            .send_request(ServiceRequest::GetConversation(hash, s))
             .await;
 
         let _ = r.await.ok().flatten()?;
@@ -783,11 +803,37 @@ impl<S: Store> TheMan<S> {
         })
     }
 
+    pub async fn get_message(&self, hash: Hash) -> Option<Message> {
+        let (s, r) = oneshot::channel();
+        self.inner
+            .send_request(ServiceRequest::GetMessage(hash, s))
+            .await;
+
+        r.await.unwrap()
+    }
+
+    pub async fn subscribe_messages(&self) -> watch::Receiver<Option<Message>> {
+        let (s, r) = oneshot::channel();
+        self.inner
+            .send_request(ServiceRequest::RequestMessageSubscription(s))
+            .await;
+
+        r.await.unwrap()
+    }
+
+    pub async fn send_message(&self, raw: RawMessage) -> Option<Hash> {
+        let (s, r) = oneshot::channel();
+        self.inner.send_request(ServiceRequest::Send(raw, s)).await;
+        r.await.unwrap()
+    }
+
     pub async fn recover(&self, ticket: Ticket) {
         for node_id in ticket.nodes.iter() {
             self.connect(node_id.node_id).await;
         }
-        self.inner.send(ServiceRequest::Recover(ticket)).await;
+        self.inner
+            .send_request(ServiceRequest::Recover(ticket))
+            .await;
     }
 
     pub async fn connect(&self, node_id: NodeId) {
