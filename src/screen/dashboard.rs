@@ -1,56 +1,65 @@
 use std::sync::Arc;
 
+use iced::advanced::graphics::futures::MaybeSend;
 use iced::{widget as W, Element, Renderer, Theme};
 use iced::{Subscription, Task};
 use iroh::{protocol::Router, NodeId};
 use iroh_blobs::Hash;
-use tracing::{error, info};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use tracing::error;
 
-use crate::protocol::RawMessage;
+use crate::protocol::{RawMessage, Ticket};
 use crate::{base64_deserialize, base64_serialize, protocol, Popup};
 use crate::{Message as TMessage, TPopup};
 
 #[derive(Clone)]
-pub struct PopupCreateConversation {
-    nodes: Vec<NodeId>,
+pub struct PopupGetList<
+    T: std::fmt::Debug + Clone + DeserializeOwned + Serialize + MaybeSend + Sync,
+> {
+    placeholder: String,
+    submit: String,
+    list: Vec<T>,
     input: String,
-    finished: Option<Vec<NodeId>>,
+    finished: Option<Vec<T>>,
 }
 
 #[derive(Debug, Clone)]
-pub enum CreateConversationMessage {
+pub enum GetListMessage<
+    T: std::fmt::Debug + Clone + DeserializeOwned + Serialize + MaybeSend + Sync,
+> {
     Add,
     SetInput(String),
-    Finished(Vec<NodeId>),
-    Create,
+    Finished(Vec<T>),
+    Finish,
 }
 
-impl TPopup<CreateConversationMessage> for PopupCreateConversation {
-    fn update(&mut self, message: CreateConversationMessage) -> Task<CreateConversationMessage> {
+impl<T: std::fmt::Debug + Clone + DeserializeOwned + Serialize + MaybeSend + Sync>
+    TPopup<GetListMessage<T>> for PopupGetList<T>
+{
+    fn update(&mut self, message: GetListMessage<T>) -> Task<GetListMessage<T>> {
         match message {
-            CreateConversationMessage::Add => {
+            GetListMessage::Add => {
                 let input = std::mem::take(&mut self.input);
-                if let Ok(node_id) = base64_deserialize::<NodeId>(input) {
-                    self.nodes.push(node_id);
-                    self.nodes.sort();
-                    self.nodes.dedup();
+                if let Ok(item) = base64_deserialize::<T>(input) {
+                    self.list.push(item);
                 } else {
-                    error!("Invalid node_id");
+                    error!("Cannot deserialize");
                 }
             }
-            CreateConversationMessage::SetInput(input) => self.input = input,
-            CreateConversationMessage::Create => {
-                self.finished = Some(self.nodes.clone());
+            GetListMessage::SetInput(input) => self.input = input,
+            GetListMessage::Finish => {
+                self.finished = Some(self.list.clone());
             }
-            CreateConversationMessage::Finished(_) => unreachable!(),
+            GetListMessage::Finished(_) => unreachable!(),
         }
         Task::none()
     }
 
-    fn view(&self) -> Element<CreateConversationMessage, Theme, Renderer> {
+    fn view(&self) -> Element<GetListMessage<T>, Theme, Renderer> {
         W::column![
             W::column(
-                self.nodes
+                self.list
                     .iter()
                     .map(|node_id| Element::from(W::button(W::text(
                         base64_serialize(node_id).unwrap()
@@ -58,92 +67,22 @@ impl TPopup<CreateConversationMessage> for PopupCreateConversation {
             ),
             W::vertical_space(),
             W::row![
-                W::text_input("NodeId", &self.input)
-                    .on_input(CreateConversationMessage::SetInput)
-                    .on_submit(CreateConversationMessage::Add),
-                W::button("Add").on_press(CreateConversationMessage::Add)
+                W::text_input(&self.placeholder, &self.input)
+                    .on_input(GetListMessage::SetInput)
+                    .on_submit(GetListMessage::Add),
+                W::button("Add").on_press(GetListMessage::Add)
             ],
-            W::button("Create").on_press_maybe(
-                (!self.nodes.is_empty()).then_some(CreateConversationMessage::Create)
-            )
+            W::button(self.submit.as_str())
+                .on_press_maybe((!self.list.is_empty()).then_some(GetListMessage::Finish))
         ]
         .into()
     }
 
-    fn finish(&self) -> Option<CreateConversationMessage> {
-        if let Some(finished) = &self.finished {
-            Some(CreateConversationMessage::Finished(finished.clone()))
-        } else {
-            None
-        }
+    fn finish(&self) -> Option<GetListMessage<T>> {
+        self.finished
+            .as_ref()
+            .map(|finished| GetListMessage::Finished(finished.clone()))
     }
-}
-
-#[derive(Clone)]
-pub struct PopupRecoverConversation {
-    tickets: Vec<protocol::Ticket>,
-    input: String,
-    finished: Option<Vec<protocol::Ticket>>,
-}
-
-impl TPopup<RecoverConversationMessage> for PopupRecoverConversation {
-    fn update(&mut self, message: RecoverConversationMessage) -> Task<RecoverConversationMessage> {
-        match message {
-            RecoverConversationMessage::Add => {
-                let input = std::mem::take(&mut self.input);
-                if let Ok(ticket) = base64_deserialize::<protocol::Ticket>(input) {
-                    self.tickets.push(ticket);
-                } else {
-                    error!("Invalid node_id");
-                }
-            }
-            RecoverConversationMessage::SetInput(input) => self.input = input,
-            RecoverConversationMessage::Create => {
-                self.finished = Some(self.tickets.clone());
-            }
-            RecoverConversationMessage::Finished(_) => unreachable!(),
-        }
-        Task::none()
-    }
-
-    fn view(&self) -> Element<RecoverConversationMessage, Theme, Renderer> {
-        W::column![
-            W::column(
-                self.tickets
-                    .iter()
-                    .map(|node_id| Element::from(W::button(W::text(
-                        base64_serialize(node_id).unwrap()
-                    ))))
-            ),
-            W::vertical_space(),
-            W::row![
-                W::text_input("Message Ticket", &self.input)
-                    .on_input(RecoverConversationMessage::SetInput)
-                    .on_submit(RecoverConversationMessage::Add),
-                W::button("Add").on_press(RecoverConversationMessage::Add)
-            ],
-            W::button("Recover").on_press_maybe(
-                (!self.tickets.is_empty()).then_some(RecoverConversationMessage::Create)
-            )
-        ]
-        .into()
-    }
-
-    fn finish(&self) -> Option<RecoverConversationMessage> {
-        if let Some(finished) = &self.finished {
-            Some(RecoverConversationMessage::Finished(finished.clone()))
-        } else {
-            None
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum RecoverConversationMessage {
-    Add,
-    SetInput(String),
-    Finished(Vec<protocol::Ticket>),
-    Create,
 }
 
 pub enum Msg {
@@ -153,22 +92,18 @@ pub enum Msg {
 
 pub struct Tail {
     messages: Vec<Msg>,
-    input: String,
 }
 
 pub struct Conversation {
     raw: protocol::Conversation,
     tails: Vec<Tail>,
     input: String,
+    selected: Option<Ticket>,
 }
 
 impl Clone for Conversation {
     fn clone(&self) -> Self {
-        Self {
-            tails: Vec::default(),
-            raw: todo!(),
-            input: todo!(),
-        }
+        todo!()
     }
 }
 
@@ -182,20 +117,19 @@ impl std::fmt::Debug for Conversation {
 pub enum Message {
     CopyNodeId(NodeId),
     CopyTicket(protocol::Ticket),
-    PopupCreateConversation(CreateConversationMessage),
-    PopupRecoverConversation(RecoverConversationMessage),
+    PopupCreateConversation(GetListMessage<NodeId>),
+    PopupRecoverConversation(GetListMessage<Ticket>),
     CreateConversation,
     RecoverConversation,
     GetConversations,
     SetConversations(Vec<Hash>),
     SetConversation(Hash),
-    SetMessage(protocol::Message),
+    Set(protocol::Message),
     RecvConversation(Conversation),
-    SetTailInput(usize, String),
     SetInput(String),
-    SendTail(usize),
     Send,
-    AddMessage(protocol::Message),
+    Add(protocol::Message),
+    Select(Ticket),
 }
 
 #[derive(Debug, Clone)]
@@ -237,8 +171,10 @@ impl Dashboard {
                 iced::clipboard::write(base64_serialize(&ticket).unwrap())
             }
             Message::CreateConversation => Task::done(TMessage::CreatePopup({
-                Popup::new(PopupCreateConversation {
-                    nodes: Vec::default(),
+                Popup::new(PopupGetList::<NodeId> {
+                    placeholder: "NodeId".to_owned(),
+                    submit: "Create".to_owned(),
+                    list: Vec::default(),
                     input: String::default(),
                     finished: None,
                 })
@@ -254,8 +190,10 @@ impl Dashboard {
                 )
             })),
             Message::RecoverConversation => Task::done(TMessage::CreatePopup({
-                Popup::new(PopupRecoverConversation {
-                    tickets: Vec::default(),
+                Popup::new(PopupGetList::<Ticket> {
+                    placeholder: "Message Ticket".to_owned(),
+                    submit: "Recover".to_owned(),
+                    list: Vec::default(),
                     input: String::default(),
                     finished: None,
                 })
@@ -282,7 +220,7 @@ impl Dashboard {
                 self.conversations = conversations;
                 Task::none()
             }
-            Message::PopupCreateConversation(CreateConversationMessage::Finished(nodes_id)) => {
+            Message::PopupCreateConversation(GetListMessage::Finished(nodes_id)) => {
                 let node_id = self.node.endpoint().node_id();
                 let the_man = self.the_man.clone();
                 Task::perform(
@@ -305,7 +243,7 @@ impl Dashboard {
                 .map(TMessage::Dashboard)
             }
 
-            Message::PopupRecoverConversation(RecoverConversationMessage::Finished(tickets)) => {
+            Message::PopupRecoverConversation(GetListMessage::<Ticket>::Finished(tickets)) => {
                 let mut tasks = Vec::default();
                 for ticket in tickets {
                     let the_man = self.the_man.clone();
@@ -326,11 +264,11 @@ impl Dashboard {
                                     .cloned()
                                     .map(|ticket| Tail {
                                         messages: vec![Msg::Waiting(ticket)],
-                                        input: String::default(),
                                     })
                                     .collect::<Vec<_>>(),
                                 raw: conversation,
                                 input: String::default(),
+                                selected: None,
                             }
                         },
                         Message::RecvConversation,
@@ -356,11 +294,11 @@ impl Dashboard {
                                 .cloned()
                                 .map(|ticket| Tail {
                                     messages: vec![Msg::Waiting(ticket)],
-                                    input: String::default(),
                                 })
                                 .collect::<Vec<_>>(),
                             raw: conversation,
                             input: String::default(),
+                            selected: None,
                         }
                     },
                     Message::RecvConversation,
@@ -383,7 +321,7 @@ impl Dashboard {
                                     .await
                                     .expect("Cannot get message!")
                             },
-                            Message::SetMessage,
+                            Message::Set,
                         ))
                     }
                 }
@@ -392,7 +330,7 @@ impl Dashboard {
 
                 Task::batch(tasks).map(TMessage::Dashboard)
             }
-            Message::SetMessage(raw) => {
+            Message::Set(raw) => {
                 let Some(conversation) = &mut self.conversation else {
                     return Task::none();
                 };
@@ -421,7 +359,7 @@ impl Dashboard {
                                         .await
                                         .expect("Cannot get message")
                                 },
-                                Message::SetMessage,
+                                Message::Set,
                             )
                             .map(TMessage::Dashboard)
                         } else {
@@ -432,14 +370,6 @@ impl Dashboard {
 
                 Task::none()
             }
-            Message::SetTailInput(index, input) => {
-                let Some(conversation) = &mut self.conversation else {
-                    return Task::none();
-                };
-
-                conversation.tails[index].input = input;
-                Task::none()
-            }
             Message::SetInput(input) => {
                 let Some(conversation) = &mut self.conversation else {
                     return Task::none();
@@ -447,44 +377,21 @@ impl Dashboard {
                 conversation.input = input;
                 Task::none()
             }
-            Message::SendTail(index) => {
+            Message::Select(hash) => {
                 let Some(conversation) = &mut self.conversation else {
                     return Task::none();
                 };
-                let Msg::Some(last) = conversation.tails[index]
-                    .messages
-                    .last()
-                    .expect("No Messages")
-                else {
-                    error!("Cannot respond to a message we don't have.");
-                    return Task::none();
-                };
+                if conversation
+                    .selected
+                    .as_ref()
+                    .is_some_and(|h| h.hash() == hash.hash())
+                {
+                    conversation.selected = None;
+                } else {
+                    conversation.selected = Some(hash);
+                }
 
-                let the_man = self.the_man.clone();
-                let ticket = last.ticket.clone();
-                let text = std::mem::take(&mut conversation.tails[index].input);
-                let conversation_ticket = conversation.raw.ticket.clone();
-
-                Task::perform(
-                    async move {
-                        let hash = the_man
-                            .send_message(RawMessage {
-                                last: Some(ticket),
-                                time: chrono::Utc::now(),
-                                conversation: conversation_ticket,
-                                data: text,
-                            })
-                            .await
-                            .expect("Cannot send message!");
-
-                        the_man
-                            .get_message(hash)
-                            .await
-                            .expect("Cannot get message!")
-                    },
-                    Message::AddMessage,
-                )
-                .map(TMessage::Dashboard)
+                Task::none()
             }
             Message::Send => {
                 let Some(conversation) = &mut self.conversation else {
@@ -495,52 +402,81 @@ impl Dashboard {
                 let text = std::mem::take(&mut conversation.input);
                 let conversation_ticket = conversation.raw.ticket.clone();
 
-                Task::perform(
-                    async move {
-                        let hash = the_man
-                            .send_message(RawMessage {
-                                last: None,
-                                time: chrono::Utc::now(),
-                                conversation: conversation_ticket,
-                                data: text,
-                            })
-                            .await
-                            .expect("Cannot send message!");
+                if let Some(ticket) = conversation.selected.clone() {
+                    Task::perform(
+                        async move {
+                            let hash = the_man
+                                .send_message(RawMessage {
+                                    last: Some(ticket),
+                                    time: chrono::Utc::now(),
+                                    conversation: conversation_ticket,
+                                    data: text,
+                                })
+                                .await
+                                .expect("Cannot send message!");
 
-                        the_man
-                            .get_message(hash)
-                            .await
-                            .expect("Cannot get message!")
-                    },
-                    Message::AddMessage,
-                )
+                            the_man
+                                .get_message(hash)
+                                .await
+                                .expect("Cannot get message!")
+                        },
+                        Message::Add,
+                    )
+                } else {
+                    Task::perform(
+                        async move {
+                            let hash = the_man
+                                .send_message(RawMessage {
+                                    last: None,
+                                    time: chrono::Utc::now(),
+                                    conversation: conversation_ticket,
+                                    data: text,
+                                })
+                                .await
+                                .expect("Cannot send message!");
+
+                            the_man
+                                .get_message(hash)
+                                .await
+                                .expect("Cannot get message!")
+                        },
+                        Message::Add,
+                    )
+                }
                 .map(TMessage::Dashboard)
             }
-            Message::AddMessage(message) => {
+            Message::Add(message) => {
                 let Some(conversation) = &mut self.conversation else {
                     return Task::none();
                 };
 
+                let mut add = None;
+
                 if let Some(last) = message.raw.last.clone() {
-                    for tail in conversation.tails.iter_mut() {
-                        for (i, msg) in tail.messages.iter_mut().enumerate() {
-                            let Msg::Some(msg) = &msg else {
-                                continue;
-                            };
-                            if msg.ticket.hash() != last.hash() {
-                                continue;
-                            }
-                            tail.messages.insert(i + 1, Msg::Some(message));
-                            return Task::none();
+                    for (i, tail) in conversation.tails.iter().enumerate() {
+                        let tail_last = tail.messages.last().unwrap();
+                        let Msg::Some(tail_last) = &tail_last else {
+                            continue;
+                        };
+                        if tail_last.ticket.hash() != last.hash() {
+                            continue;
                         }
+
+                        add = Some(i);
                     }
+                }
+
+                conversation.selected = Some(message.ticket.clone());
+
+                if let Some(i) = add {
+                    conversation.tails[i].messages.push(Msg::Some(message));
+                    Task::none()
                 } else {
                     conversation.tails.push(Tail {
                         messages: vec![Msg::Some(message)],
-                        input: String::default(),
                     });
+                    Task::none()
                 }
-                Task::none()
             }
             _ => todo!(),
         }
@@ -573,37 +509,38 @@ impl Dashboard {
                 break 'd Element::from(W::row![]);
             };
 
-            Element::from(W::column([
-                Element::from(W::row(conversation.tails.iter().enumerate().map(
-                    |(i, tail)| {
-                        let body = Element::from(W::column(tail.messages.iter().map(|msg| {
-                            match msg {
-                                Msg::Waiting(ticket) => Element::from(W::text(format!(
-                                    "Waiting: {}",
-                                    base64_serialize(ticket).unwrap()
-                                ))),
-                                Msg::Some(message) => Element::from(
+            Element::from(W::scrollable(W::column([
+                Element::from(W::scrollable(W::row(conversation.tails.iter().map(
+                    |tail| {
+                        let body =
+                            Element::from(W::scrollable(W::column(tail.messages.iter().map(
+                                |msg| match msg {
+                                    Msg::Waiting(ticket) => Element::from(W::text(format!(
+                                        "Waiting: {}",
+                                        base64_serialize(ticket).unwrap()
+                                    ))),
+                                    Msg::Some(message) => Element::from(W::row![
+                                    W::checkbox(
+                                        "",
+                                        conversation
+                                            .selected.as_ref()
+                                            .is_some_and(|t| t.hash() == message.ticket.hash())
+                                    ).on_toggle(|_| Message::Select(message.ticket.clone())),
                                     W::button(W::text(&message.raw.data))
                                         .on_press(Message::CopyTicket(message.ticket.clone())),
-                                ),
-                            }
-                        })));
+                                ]),
+                                },
+                            ))));
 
-                        Element::from(W::column![
-                            body,
-                            W::vertical_space(),
-                            W::text_input("Reply Message", &tail.input)
-                                .on_input(move |input| Message::SetTailInput(i, input))
-                                .on_submit(Message::SendTail(i))
-                        ])
+                        Element::from(body)
                     },
-                ))),
+                )))),
                 Element::from(
                     W::text_input("New Message", &conversation.input)
                         .on_input(Message::SetInput)
                         .on_submit(Message::Send),
                 ),
-            ]))
+            ])))
         })
         .style(W::container::bordered_box);
         let body = W::row![conversations, chat];
@@ -618,7 +555,7 @@ impl Dashboard {
             id: RecvMessages,
             receiver: self.message_receiver.clone(),
         })
-        .map(Message::AddMessage)
+        .map(Message::Add)
         .map(TMessage::Dashboard)
     }
 }
