@@ -6,10 +6,11 @@ use std::{
 use chrono::Utc;
 use ed25519::Signature;
 use futures_lite::{future::Boxed, StreamExt};
+use futures_util::stream::BoxStream;
 use iroh::{
-    endpoint::{self, Connection},
+    endpoint::{self, Connection, RecvStream, SendStream},
     protocol::ProtocolHandler,
-    Endpoint, NodeAddr, NodeId, SecretKey,
+    Endpoint, NodeId, SecretKey,
 };
 use iroh_blobs::{
     downloader::DownloadRequest,
@@ -23,12 +24,9 @@ use iroh_gossip::{
     proto::TopicId,
 };
 use serde::{Deserialize, Serialize};
-use tokio::{
-    sync::{
-        mpsc::{Receiver, Sender},
-        oneshot, watch, Mutex, RwLock,
-    },
-    task::JoinHandle,
+use tokio::sync::{
+    mpsc::{Receiver, Sender},
+    oneshot, watch, RwLock,
 };
 use tracing::{debug, error, info};
 
@@ -59,7 +57,7 @@ pub const ALPN: &[u8] = b"the-man";
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Ticket {
     pub owner_id: NodeId,
-    pub nodes: Vec<NodeAddr>,
+    pub nodes: Vec<NodeId>,
     pub hash_and_format: HashAndFormat,
 }
 
@@ -70,6 +68,10 @@ impl Ticket {
 
     pub fn format(&self) -> BlobFormat {
         self.hash_and_format.format
+    }
+
+    pub fn providers(&self) -> impl std::iter::Iterator<Item = &NodeId> {
+        self.nodes.iter().chain([&self.owner_id])
     }
 }
 
@@ -109,6 +111,12 @@ pub struct Message {
     pub ticket: Ticket,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Packet {
+    Welcome,
+    SendMessage(Ticket),
+}
+
 pub enum ServiceRequest {
     Create(RawConversation, oneshot::Sender<Option<Hash>>),
     List(oneshot::Sender<Vec<Hash>>),
@@ -118,9 +126,18 @@ pub enum ServiceRequest {
     Recover(Ticket),
     Join(Vec<NodeId>),
     RequestMessageSubscription(oneshot::Sender<watch::Receiver<Option<Message>>>),
+    Add(Connection, (SendStream, RecvStream)),
+}
+
+#[allow(dead_code)]
+struct Conn {
+    connection: Connection,
+    sender: SendStream,
+    receiver: BoxStream<'static, Vec<Packet>>,
 }
 
 struct TheManService {
+    connections: BTreeMap<NodeId, Conn>,
     message_sender: watch::Sender<Option<Message>>,
     receiver: Receiver<ServiceRequest>,
     gossip_recv: GossipReceiver,
@@ -139,7 +156,27 @@ impl TheManService {
         loop {
             let mut messages_to_add = Vec::<Ticket>::new();
 
+            let recv = (!self.connections.is_empty()).then(|| {
+                futures_util::future::select_all(self.connections.iter_mut().map(
+                    |(node_id, conn)| {
+                        Box::pin(async move { (*node_id, conn.receiver.next().await) })
+                    },
+                ))
+            });
+
             tokio::select! {
+                (recv, _, _) = async { if let Some(recv) = recv {recv.await} else {std::future::pending().await} } => {
+                    let Some(packets) = recv.1 else{
+                        info!("Disconnected from: {}", base64_serialize(&recv.0).unwrap());
+                        self.connections.remove(&recv.0);
+                        continue;
+                    };
+
+                    for packet in packets{
+                    self.handle_packet(recv.0, packet, &mut messages_to_add).await;
+
+                    }
+                }
                 Ok(Some(event)) = self.gossip_recv.try_next() => {
                     self.handle_gossip(event, &mut messages_to_add).await;
                 },
@@ -287,7 +324,7 @@ impl TheManService {
             .downloader
             .queue(DownloadRequest::new(
                 HashAndFormat::new(ticket.hash(), ticket.format()),
-                ticket.nodes.clone(),
+                ticket.providers().copied().collect::<Vec<_>>(),
             ))
             .await;
 
@@ -328,6 +365,65 @@ impl TheManService {
         messages_to_add: &mut Vec<Ticket>,
     ) {
         match request {
+            ServiceRequest::Add(connection, (mut sender, receiver)) => {
+                let node_id = endpoint::get_remote_node_id(&connection)
+                    .expect("Cannot get connection node_id");
+                info!("Connected to: {}", base64_serialize(&node_id).unwrap());
+                let mut buffer = Vec::default();
+                ciborium::into_writer(&Packet::Welcome, &mut buffer).unwrap();
+                sender
+                    .write_all(&buffer)
+                    .await
+                    .expect("Cannot write welcome packet");
+
+                let receiver = futures_lite::stream::unfold(
+                    (receiver, [0u8; 1024]),
+                    move |(mut receiver, mut buffer)| async move {
+                        match receiver.read(&mut buffer).await {
+                            Ok(Some(len)) => {
+                                let mut cursor = std::io::Cursor::new(&buffer[0..len]);
+
+                                let mut packets = Vec::default();
+
+                                loop {
+                                    let Ok(packet) =
+                                        ciborium::from_reader::<Packet, _>(&mut cursor)
+                                    else {
+                                        error!(
+                                            "Cannot read packet from: {}",
+                                            base64_serialize(&node_id).unwrap()
+                                        );
+                                        return None;
+                                    };
+
+                                    info!("Readed {}, from {}", cursor.position(), len);
+
+                                    packets.push(packet);
+
+                                    if cursor.position() == len as u64 {
+                                        break;
+                                    }
+                                }
+
+                                Some((packets, (receiver, buffer)))
+                            }
+                            Ok(None) => None,
+                            Err(err) => {
+                                error!("{err} from: {}", base64_serialize(&node_id).unwrap());
+                                None
+                            }
+                        }
+                    },
+                );
+                self.connections.insert(
+                    node_id,
+                    Conn {
+                        connection,
+                        sender,
+                        receiver: Box::pin(receiver),
+                    },
+                );
+            }
             ServiceRequest::Create(raw_conversation, sender) => {
                 let bytes = bincode::serialize(&raw_conversation).unwrap();
 
@@ -352,7 +448,7 @@ impl TheManService {
 
                 let ticket = Ticket {
                     owner_id: node_addr.node_id,
-                    nodes: vec![node_addr],
+                    nodes: Vec::default(),
                     hash_and_format: HashAndFormat {
                         hash: res.hash,
                         format: res.format,
@@ -450,7 +546,7 @@ impl TheManService {
 
                 let ticket = Ticket {
                     owner_id: node_addr.node_id,
-                    nodes: vec![node_addr],
+                    nodes: Vec::default(),
                     hash_and_format: HashAndFormat {
                         hash: res.hash,
                         format: res.format,
@@ -490,6 +586,30 @@ impl TheManService {
                 if sender.send(Some(ticket.hash())).is_err() {
                     error!("Cannot send");
                 }
+
+                let mut buffer = Vec::default();
+                ciborium::into_writer(&Packet::SendMessage(ticket), &mut buffer).unwrap();
+
+                for node_id in conversation.raw.nodes.iter() {
+                    if *node_id == node_addr.node_id {
+                        continue;
+                    }
+
+                    let Some(conn) = self.connections.get_mut(node_id) else {
+                        info!(
+                            "Cannot send message to: {}",
+                            base64_serialize(node_id).unwrap()
+                        );
+                        continue;
+                    };
+
+                    if let Err(err) = conn.sender.write_all(&buffer).await {
+                        error!(
+                            "{err} when sending to: {}",
+                            base64_serialize(node_id).unwrap()
+                        );
+                    }
+                }
             }
             ServiceRequest::Recover(ticket) => {
                 messages_to_add.push(ticket);
@@ -503,6 +623,59 @@ impl TheManService {
                 if let Err(err) = sender.send(self.message_sender.subscribe()) {
                     error!("Cannot send subscription receiver! {err:?}");
                 }
+            }
+        }
+    }
+
+    pub async fn handle_packet(
+        &mut self,
+        node_id: NodeId,
+        packet: Packet,
+        messages_to_add: &mut Vec<Ticket>,
+    ) {
+        match packet {
+            Packet::Welcome => {
+                info!("Welcome from: {}", base64_serialize(&node_id).unwrap());
+
+                let connection = self
+                    .connections
+                    .get_mut(&node_id)
+                    .expect("Welcome message but no connection, HOW????");
+                for conversation in self.conversations.values() {
+                    if !conversation.raw.nodes.contains(&node_id) {
+                        continue;
+                    }
+
+                    info!(
+                        "Sending conversation tails to: {}",
+                        base64_serialize(&node_id).unwrap()
+                    );
+
+                    for tail in conversation.tails.iter() {
+                        info!("Sending tail: {}", base64_serialize(tail).unwrap());
+                        let mut buffer = Vec::new();
+                        ciborium::into_writer(&Packet::SendMessage(tail.clone()), &mut buffer)
+                            .expect("Cannot serialize Token???");
+                        match connection.sender.write_all(&buffer).await {
+                            Ok(_) => {}
+                            Err(err) => {
+                                error!(
+                                    "{err} Cannot send tail to {}",
+                                    base64_serialize(&node_id).unwrap()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            Packet::SendMessage(ticket) => {
+                info!(
+                    "Received {} from: {}",
+                    base64_serialize(&ticket).unwrap(),
+                    base64_serialize(&node_id).unwrap()
+                );
+                messages_to_add.push(ticket);
             }
         }
     }
@@ -645,9 +818,6 @@ struct Inner<S: Store> {
     pub sender: RwLock<Option<Sender<ServiceRequest>>>,
     #[allow(unused)]
     pub blobs: Blobs<S>,
-    connections: RwLock<BTreeMap<NodeId, Connection>>,
-    watch_tasts: Mutex<Vec<JoinHandle<()>>>,
-    endpoint: Endpoint,
 }
 
 impl<S: Store> Inner<S> {
@@ -661,56 +831,12 @@ impl<S: Store> Inner<S> {
             error!("Cannot send request to Service: {err}");
         }
     }
-
-    async fn add_connection(self: &Arc<Self>, connection: Connection) {
-        let mut connections = self.connections.write().await;
-        let Ok(node_id) = endpoint::get_remote_node_id(&connection) else {
-            error!("Cannot get connection node_id");
-            return;
-        };
-        info!("Connected to {}", base64_serialize(&node_id).unwrap());
-        connections.insert(node_id, connection.clone());
-        {
-            let conn = connection.clone();
-            let inner = self.clone();
-
-            let handle = tokio::spawn(async move {
-                conn.closed().await;
-                info!("Disconnected from: {}", base64_serialize(&node_id).unwrap());
-
-                inner.connections.write().await.remove(&node_id);
-
-                inner.refresh().await;
-            });
-
-            self.watch_tasts.lock().await.push(handle);
-        }
-
-        {
-            self.watch_tasts
-                .lock()
-                .await
-                .retain(|task| !task.is_finished());
-        }
-        drop(connections);
-        self.refresh().await;
-    }
-
-    async fn refresh(&self) {
-        let nodes_ids = self
-            .connections
-            .read()
-            .await
-            .keys()
-            .copied()
-            .collect::<Vec<_>>();
-        self.send_request(ServiceRequest::Join(nodes_ids)).await;
-    }
 }
 
 #[derive(Debug, Clone)]
 pub struct TheMan<S: Store> {
     inner: Arc<Inner<S>>,
+    endpoint: Endpoint,
 }
 
 impl<S: Store> TheMan<S> {
@@ -738,6 +864,7 @@ impl<S: Store> TheMan<S> {
                     conversations: HashMap::default(),
                     endpoint,
                     message_sender: watch::Sender::new(None),
+                    connections: BTreeMap::new(),
                 }
                 .run()
                 .await;
@@ -750,10 +877,8 @@ impl<S: Store> TheMan<S> {
             inner: Arc::new(Inner {
                 sender: RwLock::new(Some(sender)),
                 blobs,
-                connections: RwLock::default(),
-                endpoint,
-                watch_tasts: Mutex::default(),
             }),
+            endpoint,
         }
     }
 
@@ -828,8 +953,8 @@ impl<S: Store> TheMan<S> {
     }
 
     pub async fn recover(&self, ticket: Ticket) {
-        for node_id in ticket.nodes.iter() {
-            self.connect(node_id.node_id).await;
+        for node_id in ticket.providers() {
+            self.connect(*node_id).await;
         }
         self.inner
             .send_request(ServiceRequest::Recover(ticket))
@@ -838,20 +963,38 @@ impl<S: Store> TheMan<S> {
 
     pub async fn connect(&self, node_id: NodeId) {
         info!("Connecting to: {}", base64_serialize(&node_id).unwrap());
-        let Ok(conn) = self.inner.endpoint.connect(node_id, ALPN).await else {
+        let Ok(conn) = self.endpoint.connect(node_id, ALPN).await else {
             error!("Cannot connect to: {}", base64_serialize(&node_id).unwrap());
             return;
         };
 
-        self.inner.add_connection(conn).await;
+        let Ok(bi) = conn
+            .open_bi()
+            .await
+            .inspect_err(|err| error!("Cannot create channel: {err}"))
+        else {
+            return;
+        };
+
+        self.inner.send_request(ServiceRequest::Add(conn, bi)).await;
     }
 }
 
 impl<S: Store> ProtocolHandler for TheMan<S> {
-    fn accept(&self, connection: iroh::endpoint::Connecting) -> Boxed<anyhow::Result<()>> {
+    fn accept(&self, connecting: iroh::endpoint::Connecting) -> Boxed<anyhow::Result<()>> {
         let inner = self.inner.clone();
         Box::pin(async move {
-            inner.add_connection(connection.await?).await;
+            info!("Connecting..");
+            let connection = connecting
+                .await
+                .inspect_err(|err| error!("Connect Fail: {err}"))?;
+            let bi = connection
+                .accept_bi()
+                .await
+                .inspect_err(|err| error!("Channel Fail: {err}"))?;
+            inner
+                .send_request(ServiceRequest::Add(connection, bi))
+                .await;
 
             Ok(())
         })
@@ -860,10 +1003,6 @@ impl<S: Store> ProtocolHandler for TheMan<S> {
     fn shutdown(&self) -> Boxed<()> {
         let inner = self.inner.clone();
         Box::pin(async move {
-            let mut connections = inner.connections.write().await;
-            let connections = std::mem::take(&mut *connections);
-            drop(connections);
-
             inner.sender.write().await.take();
         })
     }

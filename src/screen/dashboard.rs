@@ -450,6 +450,10 @@ impl Dashboard {
                     return Task::none();
                 };
 
+                if message.raw.conversation.hash() != conversation.raw.ticket.hash() {
+                    return Task::none();
+                }
+
                 let mut add = None;
 
                 if let Some(last) = message.raw.last.clone() {
