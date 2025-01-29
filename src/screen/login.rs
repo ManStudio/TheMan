@@ -1,9 +1,10 @@
 use iced::Task;
 use iced::{widget as W, Element, Renderer, Theme};
 use iroh::SecretKey;
+use the_man::{base64_deserialize, base64_serialize, TheMan};
 use tracing::info;
 
-use crate::{base64_deserialize, base64_serialize, protocol, screen};
+use crate::{protocol, screen};
 use crate::{Message as TMessage, Screen};
 
 #[derive(Clone, Debug)]
@@ -31,52 +32,12 @@ impl Login {
                 self.loggingin = true;
                 return Task::perform(
                     async move {
-                        let endpoint = iroh::Endpoint::builder()
-                            .discovery_n0()
-                            .discovery_dht()
-                            .secret_key(secret_key)
-                            .bind()
-                            .await
-                            .unwrap();
+                        let the_man = TheMan::new(secret_key).await;
 
-                        let gossip = iroh_gossip::net::Gossip::builder()
-                            .spawn(endpoint.clone())
-                            .await
-                            .unwrap();
-
-                        let local_pool = iroh_blobs::util::local_pool::LocalPool::default();
-
-                        let blobs = iroh_blobs::net_protocol::Blobs::memory()
-                            .build(local_pool.handle(), &endpoint);
-
-                        let the_man = protocol::TheMan::spawn(
-                            gossip.clone(),
-                            blobs.clone(),
-                            endpoint.clone(),
-                            local_pool.handle(),
-                        )
-                        .await;
-
-                        info!("Create node");
-                        let node = iroh::protocol::Router::builder(endpoint)
-                            .accept(iroh_gossip::ALPN, gossip.clone())
-                            .accept(iroh_blobs::ALPN, blobs.clone())
-                            .accept(protocol::ALPN, the_man.clone())
-                            .spawn()
-                            .await
-                            .unwrap();
-
-                        println!(
-                            "NodeId: {}",
-                            base64_serialize(&node.endpoint().node_id()).unwrap()
-                        );
-
-                        let message_receiver = the_man.subscribe_messages().await;
+                        let message_receiver = the_man.subscribe_messages();
 
                         Screen::Dashboard(screen::dashboard::Dashboard::new(
                             name,
-                            node,
-                            local_pool,
                             the_man,
                             message_receiver,
                         ))

@@ -7,10 +7,11 @@ use iroh::{protocol::Router, NodeId};
 use iroh_blobs::Hash;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use the_man::{base64_deserialize, base64_serialize, TheMan};
 use tracing::error;
 
 use crate::protocol::{RawMessage, Ticket};
-use crate::{base64_deserialize, base64_serialize, protocol, Popup};
+use crate::{protocol, Popup};
 use crate::{Message as TMessage, TPopup};
 
 #[derive(Clone)]
@@ -115,6 +116,7 @@ impl std::fmt::Debug for Conversation {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    None,
     CopyNodeId(NodeId),
     CopyTicket(protocol::Ticket),
     PopupCreateConversation(GetListMessage<NodeId>),
@@ -130,14 +132,14 @@ pub enum Message {
     Send,
     Add(protocol::Message),
     Select(Ticket),
+    AddDefaultStream,
+    AddedDefaultStream,
 }
 
 #[derive(Debug, Clone)]
 pub struct Dashboard {
     pub name: String,
-    pub node: Router,
-    pub local_pool: Arc<iroh_blobs::util::local_pool::LocalPool>,
-    pub the_man: protocol::TheMan<iroh_blobs::store::mem::Store>,
+    pub the_man: TheMan,
     pub conversation: Option<Conversation>,
     pub conversations: Vec<Hash>,
     pub message_receiver: tokio::sync::watch::Receiver<Option<protocol::Message>>,
@@ -146,15 +148,11 @@ pub struct Dashboard {
 impl Dashboard {
     pub fn new(
         name: String,
-        node: Router,
-        local_pool: iroh_blobs::util::local_pool::LocalPool,
-        the_man: protocol::TheMan<iroh_blobs::store::mem::Store>,
+        the_man: TheMan,
         message_receiver: tokio::sync::watch::Receiver<Option<protocol::Message>>,
     ) -> Self {
         Self {
             name,
-            node,
-            local_pool: Arc::new(local_pool),
             the_man,
             conversation: None,
             conversations: Vec::default(),
@@ -221,12 +219,11 @@ impl Dashboard {
                 Task::none()
             }
             Message::PopupCreateConversation(GetListMessage::Finished(nodes_id)) => {
-                let node_id = self.node.endpoint().node_id();
                 let the_man = self.the_man.clone();
                 Task::perform(
                     async move {
                         let mut nodes_id = nodes_id;
-                        nodes_id.push(node_id);
+                        nodes_id.push(the_man.node_id());
                         let res = the_man
                             .create(protocol::RawConversation {
                                 nodes: nodes_id,
@@ -418,9 +415,9 @@ impl Dashboard {
                             the_man
                                 .get_message(hash)
                                 .await
-                                .expect("Cannot get message!")
+                                .expect("Cannot get message!");
                         },
-                        Message::Add,
+                        |_| Message::None,
                     )
                 } else {
                     Task::perform(
@@ -438,9 +435,9 @@ impl Dashboard {
                             the_man
                                 .get_message(hash)
                                 .await
-                                .expect("Cannot get message!")
+                                .expect("Cannot get message!");
                         },
-                        Message::Add,
+                        |_| Message::None,
                     )
                 }
                 .map(TMessage::Dashboard)
@@ -482,6 +479,26 @@ impl Dashboard {
                     Task::none()
                 }
             }
+            Message::AddDefaultStream => {
+                let Some(conversation) = &self.conversation else {
+                    return Task::none();
+                };
+
+                let conversation_id = conversation.raw.ticket.hash();
+
+                let the_man = self.the_man.clone();
+                Task::perform(
+                    async move {
+                        the_man
+                            .add_conversation_default_stream(conversation_id)
+                            .await;
+                    },
+                    |_| Message::AddedDefaultStream,
+                )
+                .map(TMessage::Dashboard)
+            }
+            Message::AddedDefaultStream => Task::none(),
+            Message::None => Task::none(),
             _ => todo!(),
         }
     }
@@ -503,7 +520,7 @@ impl Dashboard {
             W::button("Recover").on_press(Message::RecoverConversation),
             W::container(
                 W::button(W::text(&self.name))
-                    .on_press(Message::CopyNodeId(self.node.endpoint().node_id()))
+                    .on_press(Message::CopyNodeId(self.the_man.node_id()))
             )
             .style(W::container::bordered_box)
         ])
@@ -543,6 +560,9 @@ impl Dashboard {
                     W::text_input("New Message", &conversation.input)
                         .on_input(Message::SetInput)
                         .on_submit(Message::Send),
+                ),
+                Element::from(
+                    W::button("Add Default Input Stream").on_press(Message::AddDefaultStream),
                 ),
             ])))
         })

@@ -10,7 +10,7 @@ use futures_util::stream::BoxStream;
 use iroh::{
     endpoint::{self, Connection, RecvStream, SendStream},
     protocol::ProtocolHandler,
-    Endpoint, NodeId, SecretKey,
+    Endpoint, NodeAddr, NodeId, SecretKey,
 };
 use iroh_blobs::{
     downloader::DownloadRequest,
@@ -57,7 +57,6 @@ pub const ALPN: &[u8] = b"the-man";
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Ticket {
     pub owner_id: NodeId,
-    pub nodes: Vec<NodeId>,
     pub hash_and_format: HashAndFormat,
 }
 
@@ -71,7 +70,7 @@ impl Ticket {
     }
 
     pub fn providers(&self) -> impl std::iter::Iterator<Item = &NodeId> {
-        self.nodes.iter().chain([&self.owner_id])
+        std::iter::once(&self.owner_id)
     }
 }
 
@@ -271,9 +270,6 @@ impl TheManService {
                     let Some(conversation) = self.conversations.get_mut(&raw.conversation.hash())
                     else {
                         let mut conversation_ticket = raw.conversation.clone();
-                        conversation_ticket
-                            .nodes
-                            .extend(ticket.nodes.iter().cloned());
                         conversations_to_add.push(conversation_ticket);
                         messages_to_add.push(ticket);
                         continue;
@@ -292,7 +288,6 @@ impl TheManService {
                     if let Some(last) = raw.last.clone() {
                         if !self.messages.contains_key(&last.hash()) {
                             let mut last_ticket = last.clone();
-                            last_ticket.nodes.extend(ticket.nodes.iter().cloned());
                             messages_to_add.push(last_ticket);
                             messages_to_add.push(ticket);
                             continue;
@@ -448,7 +443,6 @@ impl TheManService {
 
                 let ticket = Ticket {
                     owner_id: node_addr.node_id,
-                    nodes: Vec::default(),
                     hash_and_format: HashAndFormat {
                         hash: res.hash,
                         format: res.format,
@@ -546,7 +540,6 @@ impl TheManService {
 
                 let ticket = Ticket {
                     owner_id: node_addr.node_id,
-                    nodes: Vec::default(),
                     hash_and_format: HashAndFormat {
                         hash: res.hash,
                         format: res.format,
@@ -569,13 +562,14 @@ impl TheManService {
                     return;
                 };
 
-                self.messages.insert(
-                    ticket.hash(),
-                    Message {
-                        raw: raw_message,
-                        ticket: ticket.clone(),
-                    },
-                );
+                let msg = Message {
+                    raw: raw_message,
+                    ticket: ticket.clone(),
+                };
+
+                _ = self.message_sender.send(Some(msg.clone()));
+
+                self.messages.insert(ticket.hash(), msg);
 
                 if let Some(index) = to_replace {
                     conversation.tails[index] = ticket.clone();
@@ -952,6 +946,14 @@ impl<S: Store> TheMan<S> {
         r.await.unwrap()
     }
 
+    pub async fn reply_last(&self, conversation: Hash, message: String) {
+        let conversation = self
+            .get_conversation(conversation)
+            .await
+            .expect("Cannot find conversation");
+        conversation.send(message).await;
+    }
+
     pub async fn recover(&self, ticket: Ticket) {
         for node_id in ticket.providers() {
             self.connect(*node_id).await;
@@ -977,6 +979,46 @@ impl<S: Store> TheMan<S> {
         };
 
         self.inner.send_request(ServiceRequest::Add(conn, bi)).await;
+    }
+
+    pub async fn store(&self, data: Vec<u8>) -> Ticket {
+        let res = self
+            .inner
+            .blobs
+            .client()
+            .add_bytes(data)
+            .await
+            .expect("Cannot add to store");
+        Ticket {
+            owner_id: self.endpoint.node_id(),
+            hash_and_format: HashAndFormat {
+                hash: res.hash,
+                format: res.format,
+            },
+        }
+    }
+
+    pub async fn get(&self, ticket: Ticket) -> Vec<u8> {
+        let res = self
+            .inner
+            .blobs
+            .downloader()
+            .queue(DownloadRequest::new(
+                ticket.hash_and_format,
+                ticket.providers().map(|node_id| NodeAddr::from(*node_id)),
+            ))
+            .await
+            .await
+            .expect("Cannot download");
+
+        let bytes = self
+            .inner
+            .blobs
+            .client()
+            .read_to_bytes(ticket.hash())
+            .await
+            .expect("Cannot get bytes");
+        bytes.into()
     }
 }
 

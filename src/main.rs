@@ -1,18 +1,20 @@
-use std::{convert::Infallible, sync::Arc};
+use std::{collections::VecDeque, convert::Infallible, sync::Arc, time::Duration};
 
 use base64::prelude::*;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use iced::{
     advanced::graphics::futures::MaybeSend, widget as W, Element, Length, Renderer, Subscription,
     Task, Theme,
 };
 use iroh::{protocol::Router, NodeId};
-use protocol::{RawConversation, Ticket};
 use serde::{de::DeserializeOwned, Serialize};
-use tracing::error;
+use the_man::{
+    base64_deserialize, base64_serialize,
+    protocol::{self, RawConversation, Ticket},
+};
+use tracing::{error, info, instrument::WithSubscriber};
 
 mod screen;
-
-pub mod protocol;
 
 #[derive(Debug, Clone)]
 pub enum Screen {
@@ -144,6 +146,11 @@ impl TheMan {
     }
 }
 
+const CHANNELS: usize = 1;
+const SAMPLE_RATE: usize = 48000;
+const BITRATE: usize = 64000;
+const FRAME_SIZE: usize = SAMPLE_RATE / (1000 / 5); // MS
+
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     tracing_subscriber::fmt()
@@ -153,11 +160,15 @@ async fn main() -> Result<(), anyhow::Error> {
         )
         .init();
 
+    // audio_testing_opus();
+
+    // return Ok(());
+
     let app = iced::application("TheMan", TheMan::update, TheMan::view)
         .subscription(TheMan::subscription);
     app.run_with(|| (TheMan::new(), Task::none())).unwrap();
 
-    Ok(())
+    return Ok(());
 
     // let endpoint = iroh::Endpoint::builder()
     //     .discovery_n0()
@@ -381,36 +392,6 @@ async fn handle_cli(
     false
 }
 
-pub fn base64_serialize<T: Serialize>(value: &T) -> bincode::Result<String> {
-    let value = bincode::serialize(value)?;
-    Ok(BASE64_STANDARD_NO_PAD.encode(value))
-}
-
-#[derive(Debug)]
-pub enum Base64DecodeError {
-    Bincode(bincode::Error),
-    Base64(base64::DecodeError),
-}
-
-impl From<base64::DecodeError> for Base64DecodeError {
-    fn from(value: base64::DecodeError) -> Self {
-        Self::Base64(value)
-    }
-}
-
-impl From<bincode::Error> for Base64DecodeError {
-    fn from(value: bincode::Error) -> Self {
-        Self::Bincode(value)
-    }
-}
-
-pub fn base64_deserialize<T: DeserializeOwned>(
-    value: impl AsRef<[u8]>,
-) -> Result<T, Base64DecodeError> {
-    let bytes = BASE64_STANDARD_NO_PAD.decode(value)?;
-    Ok(bincode::deserialize::<T>(&bytes)?)
-}
-
 pub trait DynClone {
     fn clone_box(&self) -> *mut Infallible;
 }
@@ -520,5 +501,127 @@ impl<TO: MaybeSend + Sync + Clone + 'static, FROM: MaybeSend + Sync + Clone + 's
 
     fn finish(&self) -> Option<TO> {
         self.popup.0.finish().map(|m| (self.map_from_to)(m))
+    }
+}
+
+fn setup_audio() -> (
+    cpal::Stream,
+    cpal::Stream,
+    std::sync::mpsc::Receiver<f32>,
+    std::sync::mpsc::Sender<f32>,
+) {
+    let host = cpal::default_host();
+    dbg!(host.id());
+
+    let input_device = host.default_input_device().expect("Input device");
+    info!("Input Device: {:?}", input_device.name().unwrap());
+
+    let (input_sender, input_receiver) = std::sync::mpsc::channel::<f32>();
+
+    let input_stream = input_device
+        .build_input_stream(
+            &cpal::StreamConfig {
+                channels: CHANNELS as u16,
+                sample_rate: cpal::SampleRate(48000),
+                buffer_size: cpal::BufferSize::Fixed(960),
+            },
+            move |data: &[f32], info| {
+                for sample in data {
+                    input_sender.send(*sample).expect("Cannot send");
+                }
+            },
+            |err| error!("Input {err}"),
+            None,
+        )
+        .unwrap();
+
+    let output_device = host.default_output_device().expect("Output device");
+    info!("Output Device: {:?}", output_device.name());
+
+    let output_config = output_device.default_output_config().unwrap();
+    dbg!(output_config);
+    let mut buffer = VecDeque::default();
+    let mut ii = 0.05;
+    for i in 0..48000 * 4 {
+        buffer.push_back((i as f32 * ii).sin() * 0.1);
+        if i % (48000 / 8) == 0 {
+            ii += 0.01;
+        }
+    }
+
+    let (output_sender, output_receiver) = std::sync::mpsc::channel::<f32>();
+
+    let output_stream = output_device
+        .build_output_stream(
+            &cpal::StreamConfig {
+                channels: CHANNELS as u16,
+                sample_rate: cpal::SampleRate(48000),
+                buffer_size: cpal::BufferSize::Fixed(960),
+            },
+            move |data: &mut [f32], info| {
+                for sample in data {
+                    *sample = output_receiver.try_recv().unwrap_or(0.0);
+                }
+            },
+            |err| error!("Output: {err}"),
+            None,
+        )
+        .unwrap();
+
+    (input_stream, output_stream, input_receiver, output_sender)
+}
+
+fn audio_testing_opus() {
+    let (_audio_input, _audio_output, input_receiver, output_sender) = setup_audio();
+
+    use opus_sys_kman as opus_sys;
+    unsafe {
+        let opus = opus_sys::OpusLibSys::new().expect("Cannot load opus");
+
+        let mut error = 0i32;
+
+        let mut encoder = opus.opus_encoder_create(
+            SAMPLE_RATE as i32,
+            CHANNELS as i32,
+            opus_sys::OPUS_APPLICATION_AUDIO,
+            &mut error,
+        );
+        assert_eq!(dbg!(error), 0);
+
+        opus.opus_encoder_set_bitrate(&mut encoder, BITRATE as i32);
+        opus.opus_encoder_set_expect_frame_duration(&mut encoder, FRAME_SIZE as i32);
+
+        let mut decoder = opus.opus_decoder_create(SAMPLE_RATE as i32, CHANNELS as i32, &mut error);
+        assert_eq!(dbg!(error), 0);
+
+        let mut input_buffer = [0f32; FRAME_SIZE * CHANNELS];
+        let mut packet_buffer = [0; BITRATE];
+        let mut output_buffer = [0f32; FRAME_SIZE * CHANNELS];
+        loop {
+            for sample in input_buffer.iter_mut() {
+                *sample = input_receiver.recv().unwrap();
+            }
+
+            let packet_len = dbg!(opus.opus_encode_float(
+                &mut encoder,
+                input_buffer.as_ptr() as *const _,
+                FRAME_SIZE as i32,
+                packet_buffer.as_mut_ptr(),
+                packet_buffer.len() as i32
+            ));
+
+            let output_len = dbg!(opus.opus_decode_float(
+                &mut decoder,
+                packet_buffer.as_ptr(),
+                packet_len,
+                output_buffer.as_mut_ptr(),
+                FRAME_SIZE as i32,
+                0,
+            )) * CHANNELS as i32;
+
+            for sample in &output_buffer[0..output_len as usize] {
+                output_sender.send(*sample).unwrap();
+            }
+        }
     }
 }
