@@ -762,24 +762,13 @@ impl<S: Store> ConversationHandle<S> {
 
     pub async fn send(&self, msg: impl Into<String>) {
         let conversation = self.get().await;
-        let mut messages = Vec::default();
-        for ticket in conversation.tails.iter() {
-            let (s, r) = oneshot::channel();
-            self.inner
-                .send_request(ServiceRequest::GetMessage(ticket.hash(), s))
-                .await;
-            let msg = r.await.unwrap().unwrap();
-            messages.push(msg);
-        }
-
-        messages.sort_by_key(|m| m.raw.time);
 
         let (s, r) = oneshot::channel();
-        if let Some(message) = messages.last() {
+        if let Some(tail) = conversation.tails.first() {
             self.inner
                 .send_request(ServiceRequest::Send(
                     RawMessage {
-                        last: Some(message.ticket.clone()),
+                        last: Some(tail.clone()),
                         time: Utc::now(),
                         conversation: conversation.ticket,
                         data: msg.into(),

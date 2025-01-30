@@ -625,3 +625,62 @@ fn audio_testing_opus() {
         }
     }
 }
+
+pub struct ViewSensor<Message: Clone> {
+    on_in_view: Message,
+}
+
+impl<Renderer: iced::advanced::Renderer, Theme, Message: Clone>
+    iced::advanced::Widget<Message, Theme, Renderer> for ViewSensor<Message>
+{
+    fn size(&self) -> iced::Size<Length> {
+        iced::Size {
+            width: 0.into(),
+            height: 0.into(),
+        }
+    }
+
+    fn layout(
+        &self,
+        _tree: &mut iced::advanced::widget::Tree,
+        _renderer: &Renderer,
+        _limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        iced::advanced::layout::Node::new(iced::Size {
+            width: 0.0,
+            height: 0.0,
+        })
+    }
+
+    fn draw(
+        &self,
+        _tree: &iced::advanced::widget::Tree,
+        _renderer: &mut Renderer,
+        _theme: &Theme,
+        _style: &iced::advanced::renderer::Style,
+        _layout: iced::advanced::Layout<'_>,
+        _cursor: iced::advanced::mouse::Cursor,
+        _viewport: &iced::Rectangle,
+    ) {
+    }
+
+    fn on_event(
+        &mut self,
+        _state: &mut iced::advanced::widget::Tree,
+        event: iced::Event,
+        layout: iced::advanced::Layout<'_>,
+        _cursor: iced::advanced::mouse::Cursor,
+        _renderer: &Renderer,
+        _clipboard: &mut dyn iced::advanced::Clipboard,
+        shell: &mut iced::advanced::Shell<'_, Message>,
+        viewport: &iced::Rectangle,
+    ) -> iced::advanced::graphics::core::event::Status {
+        // println!("Event: {event:?} {viewport:?} {layout:?}");
+        if viewport.x == layout.position().x && viewport.y == layout.position().y {
+            if let iced::Event::Window(iced::window::Event::RedrawRequested(_)) = &event {
+                shell.publish(self.on_in_view.clone());
+            }
+        }
+        iced::advanced::graphics::core::event::Status::Ignored
+    }
+}

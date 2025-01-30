@@ -11,7 +11,7 @@ use the_man::{base64_deserialize, base64_serialize, TheMan};
 use tracing::error;
 
 use crate::protocol::{RawMessage, Ticket};
-use crate::{protocol, Popup};
+use crate::{protocol, Popup, ViewSensor};
 use crate::{Message as TMessage, TPopup};
 
 #[derive(Clone)]
@@ -91,6 +91,15 @@ pub enum Msg {
     Some(protocol::Message),
 }
 
+impl Msg {
+    pub fn hash(&self) -> Hash {
+        match self {
+            Msg::Waiting(ticket) => ticket.hash(),
+            Msg::Some(message) => message.ticket.hash(),
+        }
+    }
+}
+
 pub struct Tail {
     messages: Vec<Msg>,
 }
@@ -134,6 +143,7 @@ pub enum Message {
     Select(Ticket),
     AddDefaultStream,
     AddedDefaultStream,
+    LoadTail(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -342,26 +352,9 @@ impl Dashboard {
                             continue;
                         }
 
-                        let ticket = raw.raw.last.clone();
-
                         *msg = Msg::Some(raw);
 
-                        return if let Some(ticket) = ticket {
-                            tail.messages.insert(0, Msg::Waiting(ticket.clone()));
-                            let the_man = self.the_man.clone();
-                            Task::perform(
-                                async move {
-                                    the_man
-                                        .get_message(ticket.hash())
-                                        .await
-                                        .expect("Cannot get message")
-                                },
-                                Message::Set,
-                            )
-                            .map(TMessage::Dashboard)
-                        } else {
-                            Task::none()
-                        };
+                        return Task::none();
                     }
                 }
 
@@ -467,11 +460,18 @@ impl Dashboard {
                     }
                 }
 
-                conversation.selected = Some(message.ticket.clone());
-
                 if let Some(i) = add {
-                    conversation.tails[i].messages.push(Msg::Some(message));
-                    Task::none()
+                    let tail = &mut conversation.tails[i];
+
+                    if tail.messages.len() > 100 {
+                        tail.messages.drain(..tail.messages.len() - 100);
+                    }
+
+                    tail.messages.push(Msg::Some(message));
+                    W::scrollable::snap_to(
+                        W::scrollable::Id::new(format!("scroll{i}")),
+                        W::scrollable::RelativeOffset::END,
+                    )
                 } else {
                     conversation.tails.push(Tail {
                         messages: vec![Msg::Some(message)],
@@ -499,6 +499,36 @@ impl Dashboard {
             }
             Message::AddedDefaultStream => Task::none(),
             Message::None => Task::none(),
+            Message::LoadTail(tail_idx) => {
+                let Some(conversation) = &mut self.conversation else {
+                    return Task::none();
+                };
+                let Some(tail) = conversation.tails.get_mut(tail_idx) else {
+                    return Task::none();
+                };
+                let first = tail.messages.first().unwrap();
+                let Msg::Some(msg) = &first else {
+                    return Task::none();
+                };
+                let Some(last) = &msg.raw.last else {
+                    return Task::none();
+                };
+                let last = last.clone();
+
+                tail.messages.insert(0, Msg::Waiting(last.clone()));
+
+                let the_man = self.the_man.clone();
+                Task::perform(
+                    async move {
+                        the_man
+                            .get_message(last.hash())
+                            .await
+                            .expect("Cannot get message")
+                    },
+                    Message::Set,
+                )
+                .map(TMessage::Dashboard)
+            }
             _ => todo!(),
         }
     }
@@ -530,32 +560,51 @@ impl Dashboard {
                 break 'd Element::from(W::row![]);
             };
 
-            Element::from(W::scrollable(W::column([
-                Element::from(W::scrollable(W::row(conversation.tails.iter().map(
-                    |tail| {
-                        let body =
-                            Element::from(W::scrollable(W::column(tail.messages.iter().map(
-                                |msg| match msg {
-                                    Msg::Waiting(ticket) => Element::from(W::text(format!(
-                                        "Waiting: {}",
-                                        base64_serialize(ticket).unwrap()
-                                    ))),
-                                    Msg::Some(message) => Element::from(W::row![
-                                    W::checkbox(
-                                        "",
-                                        conversation
-                                            .selected.as_ref()
-                                            .is_some_and(|t| t.hash() == message.ticket.hash())
-                                    ).on_toggle(|_| Message::Select(message.ticket.clone())),
-                                    W::button(W::text(&message.raw.data))
-                                        .on_press(Message::CopyTicket(message.ticket.clone())),
-                                ]),
-                                },
-                            ))));
+            Element::from(W::column([
+                Element::from(
+                    W::scrollable(W::row(conversation.tails.iter().enumerate().map(
+                        |(tail_idx, tail)| {
+                            let body = Element::from(
+                                W::scrollable(W::column(
+                                    std::iter::once(Element::new(ViewSensor {
+                                        on_in_view: Message::LoadTail(tail_idx),
+                                    }))
+                                    .chain(
+                                        tail.messages.iter().map(|msg| match msg {
+                                            Msg::Waiting(ticket) => {
+                                                Element::from(W::text(format!(
+                                                    "Waiting: {}",
+                                                    base64_serialize(ticket).unwrap()
+                                                )))
+                                            }
+                                            Msg::Some(message) => Element::from(W::row![
+                                                W::checkbox(
+                                                    "",
+                                                    conversation.selected.as_ref().is_some_and(
+                                                        |t| t.hash() == message.ticket.hash()
+                                                    )
+                                                )
+                                                .on_toggle(|_| Message::Select(
+                                                    message.ticket.clone()
+                                                )),
+                                                W::button(W::text(&message.raw.data)).on_press(
+                                                    Message::CopyTicket(message.ticket.clone())
+                                                ),
+                                            ]),
+                                        }),
+                                    ),
+                                ))
+                                .id(W::scrollable::Id::new(format!("scroll{tail_idx}"))),
+                            );
 
-                        Element::from(body)
-                    },
-                )))),
+                            Element::from(body)
+                        },
+                    )))
+                    .direction(W::scrollable::Direction::Horizontal(
+                        W::scrollable::Scrollbar::new(),
+                    ))
+                    .height(iced::Length::Fill),
+                ),
                 Element::from(
                     W::text_input("New Message", &conversation.input)
                         .on_input(Message::SetInput)
@@ -564,7 +613,7 @@ impl Dashboard {
                 Element::from(
                     W::button("Add Default Input Stream").on_press(Message::AddDefaultStream),
                 ),
-            ])))
+            ]))
         })
         .style(W::container::bordered_box);
         let body = W::row![conversations, chat];
