@@ -571,61 +571,6 @@ fn setup_audio() -> (
     (input_stream, output_stream, input_receiver, output_sender)
 }
 
-fn audio_testing_opus() {
-    let (_audio_input, _audio_output, input_receiver, output_sender) = setup_audio();
-
-    use opus_sys_kman as opus_sys;
-    unsafe {
-        let opus = opus_sys::OpusLibSys::new().expect("Cannot load opus");
-
-        let mut error = 0i32;
-
-        let mut encoder = opus.opus_encoder_create(
-            SAMPLE_RATE as i32,
-            CHANNELS as i32,
-            opus_sys::OPUS_APPLICATION_AUDIO,
-            &mut error,
-        );
-        assert_eq!(dbg!(error), 0);
-
-        opus.opus_encoder_set_bitrate(&mut encoder, BITRATE as i32);
-        opus.opus_encoder_set_expect_frame_duration(&mut encoder, FRAME_SIZE as i32);
-
-        let mut decoder = opus.opus_decoder_create(SAMPLE_RATE as i32, CHANNELS as i32, &mut error);
-        assert_eq!(dbg!(error), 0);
-
-        let mut input_buffer = [0f32; FRAME_SIZE * CHANNELS];
-        let mut packet_buffer = [0; BITRATE];
-        let mut output_buffer = [0f32; FRAME_SIZE * CHANNELS];
-        loop {
-            for sample in input_buffer.iter_mut() {
-                *sample = input_receiver.recv().unwrap();
-            }
-
-            let packet_len = dbg!(opus.opus_encode_float(
-                &mut encoder,
-                input_buffer.as_ptr() as *const _,
-                FRAME_SIZE as i32,
-                packet_buffer.as_mut_ptr(),
-                packet_buffer.len() as i32
-            ));
-
-            let output_len = dbg!(opus.opus_decode_float(
-                &mut decoder,
-                packet_buffer.as_ptr(),
-                packet_len,
-                output_buffer.as_mut_ptr(),
-                FRAME_SIZE as i32,
-                0,
-            )) * CHANNELS as i32;
-
-            for sample in &output_buffer[0..output_len as usize] {
-                output_sender.send(*sample).unwrap();
-            }
-        }
-    }
-}
-
 pub struct ViewSensor<Message: Clone> {
     on_in_view: Message,
 }

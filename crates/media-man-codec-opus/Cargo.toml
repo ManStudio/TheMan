@@ -1,0 +1,8 @@
+[package]
+name = "media-man-codec-opus"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+media-man-core = {path = "../media-man-core"}
+opus-sys-kman = {path = "../opus-sys-kman"}

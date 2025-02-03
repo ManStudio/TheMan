@@ -21,7 +21,7 @@ iced = { version = "0.13.1", features = ["advanced", "tokio"] }
 iroh = "0.31.0"
 iroh-blobs = { version = "0.31.0", features = ["rpc"] }
 iroh-gossip = { version = "0.31.0", features = ["rpc"] }
-opus-sys-kman = {path = "crates/opus-sys-kman" }
+media-man = { path = "crates/media-man", features = ["codec-opus"] }
 rand = "0.8.5"
 serde = { version = "1.0.217", features = ["derive"] }
 thiserror = "2.0.11"

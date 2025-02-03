@@ -1,0 +1,12 @@
+[package]
+name = "media-man"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+codec-opus = ["dep:media-man-codec-opus"]
+
+[dependencies]
+media-man-core = {path = "../media-man-core"}
+
+media-man-codec-opus = { path = "../media-man-codec-opus", optional = true}

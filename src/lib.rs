@@ -11,14 +11,13 @@ use cpal::{
 use iroh::{protocol::Router, NodeId, SecretKey};
 pub mod protocol;
 use iroh_blobs::Hash;
+use media_man::{CodecAudioOpus, FrameAudio, SampleFormat, TCodecAudio};
 use protocol::{ConversationHandle, Message, RawConversation, TheMan as ProtocolTheMan, Ticket};
 use serde::{de::DeserializeOwned, Serialize};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tracing::{error, info};
 
 pub struct InputStream {
-    opus: Arc<opus_sys_kman::OpusLibSys>,
-    encoder: opus_sys_kman::OpusEncoder,
     stream: Stream,
     tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
@@ -26,33 +25,15 @@ pub struct InputStream {
 unsafe impl Send for InputStream {}
 unsafe impl Sync for InputStream {}
 
-impl Drop for InputStream {
-    fn drop(&mut self) {
-        unsafe {
-            self.opus.opus_encoder_destroy(&mut self.encoder);
-        }
-    }
-}
-
 pub struct OutputStream {
-    opus: Arc<opus_sys_kman::OpusLibSys>,
-    sender: std::sync::mpsc::Sender<Vec<u8>>,
+    sender: std::sync::mpsc::Sender<media_man::Packet>,
     stream: Stream,
-    decoder: opus_sys_kman::OpusDecoder,
 }
 
 const FRAME_SIZE: usize = 960;
 
 unsafe impl Send for OutputStream {}
 unsafe impl Sync for OutputStream {}
-
-impl Drop for OutputStream {
-    fn drop(&mut self) {
-        unsafe {
-            self.opus.opus_decoder_destroy(&mut self.decoder);
-        }
-    }
-}
 
 pub struct ActiveConversation {
     input_streams: Vec<InputStream>,
@@ -68,7 +49,7 @@ pub struct TheMan {
     local_pool: Arc<iroh_blobs::util::local_pool::LocalPool>,
     message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
     conversations: Arc<Mutex<HashMap<iroh_blobs::Hash, ActiveConversation>>>,
-    codec: Arc<opus_sys_kman::OpusLibSys>,
+    codec: Arc<dyn TCodecAudio>,
 
     task: Arc<tokio::task::JoinHandle<()>>,
 }
@@ -129,14 +110,9 @@ impl TheMan {
         println!("Audio host: {}", host.id().name());
         let host = Arc::new(host);
 
-        let library = unsafe {
-            opus_sys_kman::OpusLibSys::new()
-                .expect("Cannot find opus codec or incompatible opus library")
-        };
-
         let conversations: Arc<Mutex<HashMap<iroh_blobs::Hash, ActiveConversation>>> =
             Arc::default();
-        let codec = Arc::new(library);
+        let codec = Arc::new(CodecAudioOpus::new().expect("Cannot create opus codec"));
         let task;
 
         {
@@ -199,25 +175,20 @@ impl TheMan {
                                 .output_streams
                                 .get(stream_index.parse::<usize>().unwrap())
                             {
-                                stream.sender.send(data).unwrap();
+                                stream.sender.send(media_man::Packet { data }).unwrap();
                                 continue;
                             }
 
-                            let (sender, receiver) = std::sync::mpsc::channel::<Vec<u8>>();
+                            let (sender, receiver) =
+                                std::sync::mpsc::channel::<media_man::Packet>();
 
-                            let mut decoder;
                             let output_stream;
                             {
                                 let opus = opus.clone();
-                                unsafe {
-                                    let mut ret = 0i32;
-                                    decoder = opus.opus_decoder_create(48000, 1, &mut ret);
-
-                                    if ret != 0 {
-                                        error!("Cannot create opus decoder");
-                                        std::process::exit(1);
-                                    }
-                                }
+                                let decoder_settings = opus
+                                    .default_decoder_settings(SampleFormat::F32, 48000, 1)
+                                    .unwrap();
+                                let mut decoder = opus.create_decoder(decoder_settings).unwrap();
 
                                 let mut buffer = VecDeque::<f32>::new();
 
@@ -232,25 +203,16 @@ impl TheMan {
                                             buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32),
                                         },
                                         move |samples: &mut [f32], info| {
-                                            if let Ok(packet) = receiver.try_recv() {
-                                                info!("Recv Packet: {}", packet.len());
-                                                let mut tmp = [0f32; FRAME_SIZE];
-                                                unsafe {
-                                                    let res = opus.opus_decode_float(
-                                                        &mut decoder,
-                                                        packet.as_ptr(),
-                                                        packet.len() as i32,
-                                                        tmp.as_mut_ptr(),
-                                                        FRAME_SIZE as i32,
-                                                        0,
-                                                    );
+                                            while let Ok(packet) = receiver.try_recv() {
+                                                info!("Recv Packet: {}", packet.data.len());
+                                                let frames = decoder.decode(packet).unwrap();
 
-                                                    if res < 0 {
-                                                        error!("Cannot decode");
-                                                    } else {
-                                                        buffer.extend(&tmp[0..res as usize]);
-                                                    }
-                                                }
+                                                buffer.extend(unsafe {
+                                                    std::slice::from_raw_parts(
+                                                        frames[0].data.as_ptr() as *const f32,
+                                                        frames[0].data.len() / size_of::<f32>(),
+                                                    )
+                                                });
                                             }
 
                                             for sample in samples {
@@ -264,13 +226,11 @@ impl TheMan {
                                 output_stream.play().expect("Cannot play output stream");
                             }
 
-                            sender.send(data).unwrap();
+                            sender.send(media_man::Packet { data }).unwrap();
 
                             conversation.output_streams.push(OutputStream {
-                                opus,
                                 sender,
                                 stream: output_stream,
-                                decoder,
                             });
                         }
                         "/test" => {}
@@ -347,23 +307,15 @@ impl TheMan {
             .expect("Cannot get input device");
 
         let opus = self.codec.clone();
-        let mut encoder;
-        unsafe {
-            let mut err = 0i32;
-            encoder =
-                opus.opus_encoder_create(48000, 1, opus_sys_kman::OPUS_APPLICATION_AUDIO, &mut err);
-            if err != 0 {
-                error!("Cannot create opus encoder {err}");
-                std::process::exit(1);
-            }
-        }
+        let encoder_settings = opus
+            .default_encoder_settings(SampleFormat::F32, 48000, 1)
+            .unwrap();
+        let mut encoder = opus.create_encoder(encoder_settings).unwrap();
 
         info!("Opus Encoder created");
 
         let protocol = self.protocol.clone();
         let index = conversation.input_streams.len();
-        let mut buffer = VecDeque::<f32>::default();
-        let mut data = [0u8; 1024];
 
         let tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>> = Arc::default();
 
@@ -380,43 +332,26 @@ impl TheMan {
                         buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32),
                     },
                     move |samples: &[f32], info| {
-                        buffer.extend(samples);
-                        if buffer.len() < FRAME_SIZE {
-                            return;
+                        encoder.encode(&[&FrameAudio::f32_new(samples)]).unwrap();
+
+                        while let Some(packet) = encoder.get_packet() {
+                            info!("Send Packet: {}", packet.data.len());
+
+                            let protocol = protocol.clone();
+
+                            tasks.lock().unwrap().push(rt.spawn(async move {
+                                let ticket = protocol.store(packet.data).await;
+                                protocol
+                                    .reply_last(
+                                        conversation_id,
+                                        format!(
+                                            "/auto {index} {}",
+                                            base64_serialize(&ticket).unwrap()
+                                        ),
+                                    )
+                                    .await;
+                            }));
                         }
-
-                        let mut tmp_buffer = Vec::<f32>::with_capacity(FRAME_SIZE);
-                        for _ in 0..FRAME_SIZE {
-                            tmp_buffer.push(buffer.pop_front().unwrap());
-                        }
-                        let res = unsafe {
-                            opus.opus_encode_float(
-                                &mut encoder,
-                                tmp_buffer.as_ptr(),
-                                FRAME_SIZE as i32,
-                                data.as_mut_ptr(),
-                                data.len() as i32,
-                            )
-                        };
-                        if res < 0 {
-                            error!("Cannot opus encode {res}");
-                            return;
-                        }
-
-                        let data = data[0..res as usize].to_vec();
-                        info!("Send Packet: {}", data.len());
-
-                        let protocol = protocol.clone();
-
-                        tasks.lock().unwrap().push(rt.spawn(async move {
-                            let ticket = protocol.store(data).await;
-                            protocol
-                                .reply_last(
-                                    conversation_id,
-                                    format!("/auto {index} {}", base64_serialize(&ticket).unwrap()),
-                                )
-                                .await;
-                        }));
                     },
                     |err| error!("{err} from Default audio device"),
                     None,
@@ -431,8 +366,6 @@ impl TheMan {
         conversation.input_streams.push(InputStream {
             stream: input_stream,
             tasks,
-            opus: self.codec.clone(),
-            encoder,
         });
     }
 }
