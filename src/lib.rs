@@ -82,13 +82,8 @@ impl TheMan {
 
         let blobs = iroh_blobs::net_protocol::Blobs::memory().build(local_pool.handle(), &endpoint);
 
-        let protocol = protocol::TheMan::spawn(
-            gossip.clone(),
-            blobs.clone(),
-            endpoint.clone(),
-            local_pool.handle(),
-        )
-        .await;
+        let protocol =
+            protocol::TheMan::spawn(blobs.clone(), endpoint.clone(), local_pool.handle()).await;
 
         info!("Create node");
         let node = iroh::protocol::Router::builder(endpoint)

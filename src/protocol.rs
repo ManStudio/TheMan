@@ -13,15 +13,8 @@ use iroh::{
     Endpoint, NodeAddr, NodeId, SecretKey,
 };
 use iroh_blobs::{
-    downloader::DownloadRequest,
-    net_protocol::Blobs,
-    store::{bao_tree::blake3, Store},
-    util::local_pool::LocalPoolHandle,
-    BlobFormat, Hash, HashAndFormat,
-};
-use iroh_gossip::{
-    net::{Gossip, GossipReceiver, GossipSender},
-    proto::TopicId,
+    downloader::DownloadRequest, net_protocol::Blobs, store::Store,
+    util::local_pool::LocalPoolHandle, BlobFormat, Hash, HashAndFormat,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{
@@ -123,7 +116,6 @@ pub enum ServiceRequest {
     GetConversation(Hash, oneshot::Sender<Option<Conversation>>),
     Send(RawMessage, oneshot::Sender<Option<Hash>>),
     Recover(Ticket),
-    Join(Vec<NodeId>),
     RequestMessageSubscription(oneshot::Sender<watch::Receiver<Option<Message>>>),
     Add(Connection, (SendStream, RecvStream)),
 }
@@ -139,8 +131,6 @@ struct TheManService {
     connections: BTreeMap<NodeId, Conn>,
     message_sender: watch::Sender<Option<Message>>,
     receiver: Receiver<ServiceRequest>,
-    gossip_recv: GossipReceiver,
-    gossip_sender: GossipSender,
     downloader: iroh_blobs::downloader::Downloader,
     blobs: iroh_blobs::rpc::client::blobs::MemClient,
     endpoint: iroh::Endpoint,
@@ -176,9 +166,6 @@ impl TheManService {
 
                     }
                 }
-                Ok(Some(event)) = self.gossip_recv.try_next() => {
-                    self.handle_gossip(event, &mut messages_to_add).await;
-                },
                 request = self.receiver.recv() => {
                     let Some(request) = request else{
                         break;
@@ -546,22 +533,6 @@ impl TheManService {
                     },
                 };
 
-                let Ok(bytes) = bincode::serialize(&ticket) else {
-                    error!("Cannot serialize ticket");
-                    if sender.send(None).is_err() {
-                        error!("Cannot send");
-                    }
-                    return;
-                };
-
-                let Ok(_) = self.gossip_sender.broadcast(bytes.into()).await else {
-                    error!("Cannot broadcast message ticket");
-                    if sender.send(None).is_err() {
-                        error!("Cannot send");
-                    }
-                    return;
-                };
-
                 let msg = Message {
                     raw: raw_message,
                     ticket: ticket.clone(),
@@ -607,11 +578,6 @@ impl TheManService {
             }
             ServiceRequest::Recover(ticket) => {
                 messages_to_add.push(ticket);
-            }
-            ServiceRequest::Join(peers) => {
-                if let Err(err) = self.gossip_sender.join_peers(peers).await {
-                    error!("Cannot join: {err}");
-                }
             }
             ServiceRequest::RequestMessageSubscription(sender) => {
                 if let Err(err) = sender.send(self.message_sender.subscribe()) {
@@ -670,37 +636,6 @@ impl TheManService {
                     base64_serialize(&node_id).unwrap()
                 );
                 messages_to_add.push(ticket);
-            }
-        }
-    }
-
-    pub async fn handle_gossip(
-        &mut self,
-        event: iroh_gossip::net::Event,
-        messages_to_add: &mut Vec<Ticket>,
-    ) {
-        let iroh_gossip::net::Event::Gossip(event) = event else {
-            info!("gossip Lagged");
-            return;
-        };
-
-        match event {
-            iroh_gossip::net::GossipEvent::Joined(vec) => {
-                println!("Joined: {vec:?}");
-            }
-            iroh_gossip::net::GossipEvent::NeighborUp(public_key) => {
-                println!("NeighborUp: {public_key}");
-            }
-            iroh_gossip::net::GossipEvent::NeighborDown(public_key) => {
-                println!("NeighborDown: {public_key}");
-            }
-            iroh_gossip::net::GossipEvent::Received(message) => {
-                match bincode::deserialize::<Ticket>(&message.content) {
-                    Err(err) => println!("Error when parsing topic event: {err}"),
-                    Ok(message_ticket) => {
-                        messages_to_add.push(message_ticket);
-                    }
-                }
             }
         }
     }
@@ -823,15 +758,8 @@ pub struct TheMan<S: Store> {
 }
 
 impl<S: Store> TheMan<S> {
-    pub async fn spawn(
-        gossip: Gossip,
-        blobs: Blobs<S>,
-        endpoint: Endpoint,
-        local_pool: &LocalPoolHandle,
-    ) -> Self {
-        let topic_id = TopicId::from_bytes(*blake3::hash(b"the-man").as_bytes());
+    pub async fn spawn(blobs: Blobs<S>, endpoint: Endpoint, local_pool: &LocalPoolHandle) -> Self {
         let (sender, receiver) = tokio::sync::mpsc::channel(16);
-        let (gossip_sender, gossip_recv) = gossip.subscribe(topic_id, vec![]).unwrap().split();
 
         {
             let blobs = blobs.clone();
@@ -839,8 +767,6 @@ impl<S: Store> TheMan<S> {
             local_pool.spawn_detached(move || async move {
                 TheManService {
                     receiver,
-                    gossip_sender,
-                    gossip_recv,
                     downloader: blobs.downloader().clone(),
                     blobs: blobs.client().clone(),
                     messages: HashMap::default(),
