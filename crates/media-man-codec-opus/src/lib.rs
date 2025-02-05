@@ -260,7 +260,6 @@ impl TEncoderAudio for EncoderAudioOpus {
                         data.as_mut_ptr(),
                         data.len() as i32,
                     );
-                    dbg!(res);
                     if res > 0 {
                         self.packets.push_back(Packet {
                             data: data[0..res as usize].to_vec(),

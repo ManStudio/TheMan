@@ -643,21 +643,26 @@ impl TheManService {
 
 pub struct ConversationHandle<S: Store> {
     inner: Arc<Inner<S>>,
-    hash: Hash,
+    conversation: Hash,
+    last: Option<Ticket>,
 }
 
 impl<S: Store> ConversationHandle<S> {
     pub fn hash(&self) -> &Hash {
-        &self.hash
+        &self.conversation
     }
 
     pub async fn get(&self) -> Conversation {
         let (s, r) = oneshot::channel();
         self.inner
-            .send_request(ServiceRequest::GetConversation(self.hash, s))
+            .send_request(ServiceRequest::GetConversation(self.conversation, s))
             .await;
 
         r.await.unwrap().unwrap()
+    }
+
+    pub fn set_last(&mut self, last: Ticket) {
+        self.last = Some(last);
     }
 
     pub async fn messages(&self) -> Vec<Message> {
@@ -695,38 +700,30 @@ impl<S: Store> ConversationHandle<S> {
         messages
     }
 
-    pub async fn send(&self, msg: impl Into<String>) {
-        let conversation = self.get().await;
+    pub async fn send(&mut self, msg: impl Into<String>) {
+        let conversation = self.get().await.ticket;
+        let (sender, receiver) = tokio::sync::oneshot::channel();
 
-        let (s, r) = oneshot::channel();
-        if let Some(tail) = conversation.tails.first() {
-            self.inner
-                .send_request(ServiceRequest::Send(
-                    RawMessage {
-                        last: Some(tail.clone()),
-                        time: Utc::now(),
-                        conversation: conversation.ticket,
-                        data: msg.into(),
-                    },
-                    s,
-                ))
-                .await;
-        } else {
-            self.inner
-                .send_request(ServiceRequest::Send(
-                    RawMessage {
-                        last: None,
-                        time: Utc::now(),
-                        conversation: conversation.ticket,
-                        data: msg.into(),
-                    },
-                    s,
-                ))
-                .await;
-        }
+        self.inner
+            .send_request(ServiceRequest::Send(
+                RawMessage {
+                    last: self.last.clone(),
+                    time: chrono::Utc::now(),
+                    conversation,
+                    data: msg.into(),
+                },
+                sender,
+            ))
+            .await;
 
-        if r.await.ok().flatten().is_none() {
-            error!("Message was not sent!");
+        if let Ok(Some(message_hash)) = receiver.await {
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            self.inner
+                .send_request(ServiceRequest::GetMessage(message_hash, sender))
+                .await;
+            if let Ok(Some(msg)) = receiver.await {
+                self.last = Some(msg.ticket);
+            }
         }
     }
 }
@@ -800,7 +797,8 @@ impl<S: Store> TheMan<S> {
 
         Some(ConversationHandle {
             inner: self.inner.clone(),
-            hash,
+            conversation: hash,
+            last: None,
         })
     }
 
@@ -817,7 +815,8 @@ impl<S: Store> TheMan<S> {
                 .into_iter()
                 .map(|hash| ConversationHandle {
                     inner: self.inner.clone(),
-                    hash,
+                    conversation: hash,
+                    last: None,
                 })
                 .collect::<Vec<_>>(),
         )
@@ -833,7 +832,8 @@ impl<S: Store> TheMan<S> {
 
         Some(ConversationHandle {
             inner: self.inner.clone(),
-            hash,
+            conversation: hash,
+            last: None,
         })
     }
 
@@ -859,14 +859,6 @@ impl<S: Store> TheMan<S> {
         let (s, r) = oneshot::channel();
         self.inner.send_request(ServiceRequest::Send(raw, s)).await;
         r.await.unwrap()
-    }
-
-    pub async fn reply_last(&self, conversation: Hash, message: String) {
-        let conversation = self
-            .get_conversation(conversation)
-            .await
-            .expect("Cannot find conversation");
-        conversation.send(message).await;
     }
 
     pub async fn recover(&self, ticket: Ticket) {

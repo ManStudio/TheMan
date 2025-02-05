@@ -109,6 +109,7 @@ pub struct Conversation {
     tails: Vec<Tail>,
     input: String,
     selected: Option<Ticket>,
+    active_stream: bool,
 }
 
 impl Clone for Conversation {
@@ -143,6 +144,8 @@ pub enum Message {
     Select(Ticket),
     AddDefaultStream,
     AddedDefaultStream,
+    StopDefaultStream,
+    StopedDefaultStream,
     LoadTail(usize),
 }
 
@@ -276,6 +279,7 @@ impl Dashboard {
                                 raw: conversation,
                                 input: String::default(),
                                 selected: None,
+                                active_stream: false,
                             }
                         },
                         Message::RecvConversation,
@@ -306,6 +310,7 @@ impl Dashboard {
                             raw: conversation,
                             input: String::default(),
                             selected: None,
+                            active_stream: false,
                         }
                     },
                     Message::RecvConversation,
@@ -497,7 +502,38 @@ impl Dashboard {
                 )
                 .map(TMessage::Dashboard)
             }
-            Message::AddedDefaultStream => Task::none(),
+            Message::AddedDefaultStream => {
+                let Some(conversation) = &mut self.conversation else {
+                    return Task::none();
+                };
+                conversation.active_stream = true;
+                Task::none()
+            }
+            Message::StopDefaultStream => {
+                let Some(conversation) = &mut self.conversation else {
+                    return Task::none();
+                };
+
+                let conversation_id = conversation.raw.ticket.hash();
+
+                let the_man = self.the_man.clone();
+                Task::perform(
+                    async move {
+                        the_man
+                            .stop_conversation_default_stream(conversation_id)
+                            .await;
+                    },
+                    |_| Message::StopedDefaultStream,
+                )
+                .map(TMessage::Dashboard)
+            }
+            Message::StopedDefaultStream => {
+                let Some(conversation) = &mut self.conversation else {
+                    return Task::none();
+                };
+                conversation.active_stream = false;
+                Task::none()
+            }
             Message::None => Task::none(),
             Message::LoadTail(tail_idx) => {
                 let Some(conversation) = &mut self.conversation else {
@@ -610,9 +646,11 @@ impl Dashboard {
                         .on_input(Message::SetInput)
                         .on_submit(Message::Send),
                 ),
-                Element::from(
-                    W::button("Add Default Input Stream").on_press(Message::AddDefaultStream),
-                ),
+                Element::from(if !conversation.active_stream {
+                    W::button("Add Default Input Stream").on_press(Message::AddDefaultStream)
+                } else {
+                    W::button("Stop Default Input Stream").on_press(Message::StopDefaultStream)
+                }),
             ]))
         })
         .style(W::container::bordered_box);

@@ -206,13 +206,33 @@ pub struct FrameAudio {
 }
 
 impl FrameAudio {
-    pub fn f32_new(data: &[f32]) -> FrameAudio {
+    #[allow(clippy::manual_slice_size_calculation)]
+    pub fn f32_new(data: Vec<f32>) -> FrameAudio {
         FrameAudio {
             sample_format: SampleFormat::F32,
             data: unsafe {
-                std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data))
-            }
-            .to_vec(),
+                let capacity = data.capacity();
+                let data = data.leak();
+                Vec::from_raw_parts(
+                    data.as_mut_ptr() as *mut u8,
+                    data.len() * size_of::<f32>(),
+                    capacity * size_of::<f32>(),
+                )
+            },
+        }
+    }
+
+    pub fn to_f32(self) -> Vec<f32> {
+        assert_eq!(self.sample_format, SampleFormat::F32);
+
+        unsafe {
+            let capacity = self.data.capacity();
+            let data = self.data.leak();
+            Vec::from_raw_parts(
+                data.as_mut_ptr() as *mut f32,
+                data.len() / size_of::<f32>(),
+                capacity / size_of::<f32>(),
+            )
         }
     }
 }
