@@ -1,9 +1,7 @@
-use std::sync::Arc;
-
 use iced::advanced::graphics::futures::MaybeSend;
 use iced::{widget as W, Element, Renderer, Theme};
 use iced::{Subscription, Task};
-use iroh::{protocol::Router, NodeId};
+use iroh::NodeId;
 use iroh_blobs::Hash;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -87,14 +85,14 @@ impl<T: std::fmt::Debug + Clone + DeserializeOwned + Serialize + MaybeSend + Syn
 }
 
 pub enum Msg {
-    Waiting(protocol::Ticket),
+    Waiting(Hash),
     Some(protocol::Message),
 }
 
 impl Msg {
     pub fn hash(&self) -> Hash {
         match self {
-            Msg::Waiting(ticket) => ticket.hash(),
+            Msg::Waiting(hash) => *hash,
             Msg::Some(message) => message.ticket.hash(),
         }
     }
@@ -272,8 +270,8 @@ impl Dashboard {
                                     .tails
                                     .iter()
                                     .cloned()
-                                    .map(|ticket| Tail {
-                                        messages: vec![Msg::Waiting(ticket)],
+                                    .map(|entry| Tail {
+                                        messages: vec![Msg::Waiting(entry.hash())],
                                     })
                                     .collect::<Vec<_>>(),
                                 raw: conversation,
@@ -303,8 +301,8 @@ impl Dashboard {
                                 .tails
                                 .iter()
                                 .cloned()
-                                .map(|ticket| Tail {
-                                    messages: vec![Msg::Waiting(ticket)],
+                                .map(|entry| Tail {
+                                    messages: vec![Msg::Waiting(entry.hash())],
                                 })
                                 .collect::<Vec<_>>(),
                             raw: conversation,
@@ -321,15 +319,15 @@ impl Dashboard {
                 let mut tasks = Vec::new();
                 for tail in conversation.tails.iter() {
                     for msg in tail.messages.iter() {
-                        let Msg::Waiting(ticket) = msg else {
+                        let Msg::Waiting(hash) = msg else {
                             continue;
                         };
-                        let ticket = ticket.clone();
+                        let hash = *hash;
                         let the_man = self.the_man.clone();
                         tasks.push(Task::perform(
                             async move {
                                 the_man
-                                    .get_message(ticket.hash())
+                                    .get_message(hash)
                                     .await
                                     .expect("Cannot get message!")
                             },
@@ -349,11 +347,11 @@ impl Dashboard {
 
                 for tail in conversation.tails.iter_mut() {
                     for msg in tail.messages.iter_mut() {
-                        let Msg::Waiting(ticket) = &msg else {
+                        let Msg::Waiting(hash) = &msg else {
                             continue;
                         };
 
-                        if ticket.hash() != raw.ticket.hash() {
+                        if *hash != raw.ticket.hash() {
                             continue;
                         }
 
@@ -551,7 +549,7 @@ impl Dashboard {
                 };
                 let last = last.clone();
 
-                tail.messages.insert(0, Msg::Waiting(last.clone()));
+                tail.messages.insert(0, Msg::Waiting(last.hash()));
 
                 let the_man = self.the_man.clone();
                 Task::perform(

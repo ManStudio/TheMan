@@ -1,6 +1,6 @@
 use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
+    collections::BTreeMap,
+    sync::{Arc, Weak},
 };
 
 use chrono::Utc;
@@ -90,11 +90,78 @@ impl RawConversation {
     }
 }
 
+pub struct TreeEntry {
+    prev: RwLock<Option<Arc<TreeEntry>>>,
+    hash: Hash,
+    nexts: RwLock<Vec<Weak<TreeEntry>>>,
+}
+
+impl TreeEntry {
+    pub async fn back_find(self: &Arc<Self>, hash: Hash) -> Option<(usize, Arc<TreeEntry>)> {
+        let mut depth = 0;
+        let mut prev = Some(self.clone());
+
+        while let Some(this) = prev.take() {
+            if this.hash == hash {
+                return Some((depth, this));
+            }
+
+            prev = this.prev.read().await.clone();
+            depth += 1;
+        }
+
+        None
+    }
+
+    pub fn hash(&self) -> Hash {
+        self.hash
+    }
+}
+
 #[derive(Clone)]
 pub struct Conversation {
     pub raw: RawConversation,
     pub ticket: Ticket,
-    pub tails: Vec<Ticket>,
+    pub tails: Vec<Arc<TreeEntry>>,
+}
+
+impl Conversation {
+    pub async fn add_message(&mut self, hash: Hash, last: Option<Hash>) {
+        if let Some(last) = last {
+            'adding: {
+                for tail in self.tails.iter_mut() {
+                    let Some((depth, last)) = tail.back_find(last).await.clone() else {
+                        continue;
+                    };
+
+                    let entry = Arc::new(TreeEntry {
+                        prev: RwLock::new(Some(last.clone())),
+                        hash,
+                        nexts: RwLock::default(),
+                    });
+
+                    last.nexts.write().await.push(Arc::downgrade(&entry));
+                    if depth == 0 {
+                        *tail = entry;
+                    } else {
+                        self.tails.push(entry);
+                    }
+
+                    break 'adding;
+                }
+
+                panic!("The last entry cannot be found");
+            }
+        } else {
+            let entry = Arc::new(TreeEntry {
+                prev: RwLock::new(None),
+                hash,
+                nexts: RwLock::default(),
+            });
+
+            self.tails.push(entry);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -135,9 +202,8 @@ struct TheManService {
     blobs: iroh_blobs::rpc::client::blobs::MemClient,
     endpoint: iroh::Endpoint,
 
-    messages: HashMap<Hash, Message>,
-
-    conversations: HashMap<Hash, Conversation>,
+    messages: BTreeMap<Hash, Message>,
+    conversations: BTreeMap<Hash, Conversation>,
 }
 
 impl TheManService {
@@ -256,8 +322,7 @@ impl TheManService {
 
                     let Some(conversation) = self.conversations.get_mut(&raw.conversation.hash())
                     else {
-                        let mut conversation_ticket = raw.conversation.clone();
-                        conversations_to_add.push(conversation_ticket);
+                        conversations_to_add.push(raw.conversation.clone());
                         messages_to_add.push(ticket);
                         continue;
                     };
@@ -272,27 +337,10 @@ impl TheManService {
                         continue;
                     }
 
-                    if let Some(last) = raw.last.clone() {
-                        if !self.messages.contains_key(&last.hash()) {
-                            let mut last_ticket = last.clone();
-                            messages_to_add.push(last_ticket);
-                            messages_to_add.push(ticket);
-                            continue;
-                        }
-                        if let Some(index) = conversation
-                            .tails
-                            .iter()
-                            .position(|m| m.hash() == last.hash())
-                        {
-                            conversation.tails[index] = ticket.clone();
-                            let message = Message { raw, ticket };
-                            self.messages.insert(message.ticket.hash(), message.clone());
-                            _ = self.message_sender.send(Some(message));
-                            continue;
-                        }
-                    }
+                    conversation
+                        .add_message(ticket.hash(), raw.last.as_ref().map(|ticket| ticket.hash()))
+                        .await;
 
-                    conversation.tails.push(ticket.clone());
                     let message = Message { raw, ticket };
                     self.messages.insert(message.ticket.hash(), message.clone());
                     _ = self.message_sender.send(Some(message));
@@ -493,19 +541,6 @@ impl TheManService {
                     return;
                 };
 
-                let to_replace = raw_message
-                    .last
-                    .as_ref()
-                    .and_then(|last| conversation.tails.iter().position(|m| m == last));
-
-                let Ok(node_addr) = self.endpoint.node_addr().await else {
-                    error!("Cannot get the node_addr");
-                    if sender.send(None).is_err() {
-                        error!("Cannot send");
-                    }
-                    return;
-                };
-
                 let Ok(bytes) = bincode::serialize(&raw_message) else {
                     error!("Cannot serialize message");
                     if sender.send(None).is_err() {
@@ -526,12 +561,14 @@ impl TheManService {
                 };
 
                 let ticket = Ticket {
-                    owner_id: node_addr.node_id,
+                    owner_id: self.endpoint.node_id(),
                     hash_and_format: HashAndFormat {
                         hash: res.hash,
                         format: res.format,
                     },
                 };
+
+                let last = raw_message.last.as_ref().map(|ticket| ticket.hash());
 
                 let msg = Message {
                     raw: raw_message,
@@ -542,11 +579,7 @@ impl TheManService {
 
                 self.messages.insert(ticket.hash(), msg);
 
-                if let Some(index) = to_replace {
-                    conversation.tails[index] = ticket.clone();
-                } else {
-                    conversation.tails.push(ticket.clone());
-                }
+                conversation.add_message(ticket.hash(), last).await;
 
                 if sender.send(Some(ticket.hash())).is_err() {
                     error!("Cannot send");
@@ -556,7 +589,7 @@ impl TheManService {
                 ciborium::into_writer(&Packet::SendMessage(ticket), &mut buffer).unwrap();
 
                 for node_id in conversation.raw.nodes.iter() {
-                    if *node_id == node_addr.node_id {
+                    if *node_id == self.endpoint.node_id() {
                         continue;
                     }
 
@@ -612,10 +645,14 @@ impl TheManService {
                     );
 
                     for tail in conversation.tails.iter() {
-                        info!("Sending tail: {}", base64_serialize(tail).unwrap());
+                        info!("Sending tail: {}", base64_serialize(&tail.hash).unwrap());
                         let mut buffer = Vec::new();
-                        ciborium::into_writer(&Packet::SendMessage(tail.clone()), &mut buffer)
-                            .expect("Cannot serialize Token???");
+                        let msg = self.messages.get(&tail.hash).expect("Cannot send message entry because we don't have the message from the entry");
+                        ciborium::into_writer(
+                            &Packet::SendMessage(msg.ticket.clone()),
+                            &mut buffer,
+                        )
+                        .expect("Cannot serialize Token???");
                         match connection.sender.write_all(&buffer).await {
                             Ok(_) => {}
                             Err(err) => {
@@ -766,8 +803,8 @@ impl<S: Store> TheMan<S> {
                     receiver,
                     downloader: blobs.downloader().clone(),
                     blobs: blobs.client().clone(),
-                    messages: HashMap::default(),
-                    conversations: HashMap::default(),
+                    messages: BTreeMap::default(),
+                    conversations: BTreeMap::default(),
                     endpoint,
                     message_sender: watch::Sender::new(None),
                     connections: BTreeMap::new(),
