@@ -452,8 +452,7 @@ impl<Renderer: iced::advanced::Renderer, Theme, Message: Clone>
         shell: &mut iced::advanced::Shell<'_, Message>,
         viewport: &iced::Rectangle,
     ) -> iced::advanced::graphics::core::event::Status {
-        // println!("Event: {event:?} {viewport:?} {layout:?}");
-        if viewport.x == layout.position().x && viewport.y == layout.position().y {
+        if layout.bounds().is_within(viewport) {
             if let iced::Event::Window(iced::window::Event::RedrawRequested(_)) = &event {
                 shell.publish(self.on_in_view.clone());
             }

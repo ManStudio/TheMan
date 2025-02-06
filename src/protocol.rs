@@ -90,6 +90,7 @@ impl RawConversation {
     }
 }
 
+#[derive(Debug)]
 pub struct TreeEntry {
     prev: RwLock<Option<Arc<TreeEntry>>>,
     hash: Hash,
@@ -111,6 +112,18 @@ impl TreeEntry {
         }
 
         None
+    }
+
+    pub async fn prev(&self) -> Option<Arc<TreeEntry>> {
+        self.prev.read().await.clone()
+    }
+
+    pub async fn next(&self) -> Option<Arc<TreeEntry>> {
+        self.nexts
+            .read()
+            .await
+            .first()
+            .and_then(|entry| entry.upgrade())
     }
 
     pub fn hash(&self) -> Hash {
