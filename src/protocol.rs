@@ -1,25 +1,24 @@
 use std::{
     collections::BTreeMap,
+    pin::Pin,
     sync::{Arc, Weak},
 };
 
 use chrono::Utc;
 use ed25519::Signature;
 use futures_lite::{future::Boxed, StreamExt};
-use futures_util::stream::BoxStream;
 use iroh::{
     endpoint::{self, Connection, RecvStream, SendStream},
     protocol::ProtocolHandler,
     Endpoint, NodeAddr, NodeId, SecretKey,
 };
 use iroh_blobs::{
-    downloader::DownloadRequest, net_protocol::Blobs, store::Store,
-    util::local_pool::LocalPoolHandle, BlobFormat, Hash, HashAndFormat,
+    downloader::DownloadRequest, net_protocol::Blobs, store::Store, BlobFormat, Hash, HashAndFormat,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{
     mpsc::{Receiver, Sender},
-    oneshot, watch, RwLock,
+    oneshot, watch, Mutex, RwLock,
 };
 use tracing::{debug, error, info};
 
@@ -204,7 +203,7 @@ pub enum ServiceRequest {
 struct Conn {
     connection: Connection,
     sender: SendStream,
-    receiver: BoxStream<'static, Vec<Packet>>,
+    receiver: Pin<Box<dyn futures_lite::Stream<Item = Vec<Packet>> + Send + Sync>>,
 }
 
 struct TheManService<S: Store> {
@@ -268,6 +267,18 @@ impl<S: Store> TheManService<S> {
                         continue;
                     };
 
+                    self.blobs
+                        .store()
+                        .set_tag(
+                            iroh_blobs::Tag(
+                                format!("conversation-{}", base64_serialize(&ticket).unwrap())
+                                    .into(),
+                            ),
+                            Some(ticket.hash_and_format),
+                        )
+                        .await
+                        .unwrap();
+
                     let Ok(signed) = bincode::deserialize::<Signed>(&bytes) else {
                         error!(
                             "Cannot parse signed conversation: {}",
@@ -307,20 +318,40 @@ impl<S: Store> TheManService<S> {
                         continue;
                     }
 
-                    let Some(bytes) = self.download(&ticket).await else {
-                        continue;
-                    };
-
-                    self.blobs
+                    let status = self
+                        .blobs
                         .store()
-                        .set_tag(
-                            iroh_blobs::Tag(
-                                format!("message-{}", base64_serialize(&ticket).unwrap()).into(),
-                            ),
-                            Some(ticket.hash_and_format),
-                        )
+                        .entry_status(&ticket.hash())
                         .await
                         .unwrap();
+                    let bytes = match status {
+                        iroh_blobs::store::EntryStatus::Complete => self
+                            .blobs
+                            .client()
+                            .read_to_bytes(ticket.hash())
+                            .await
+                            .unwrap(),
+                        iroh_blobs::store::EntryStatus::Partial
+                        | iroh_blobs::store::EntryStatus::NotFound => {
+                            let Some(bytes) = self.download(&ticket).await else {
+                                continue;
+                            };
+
+                            self.blobs
+                                .store()
+                                .set_tag(
+                                    iroh_blobs::Tag(
+                                        format!("message-{}", base64_serialize(&ticket).unwrap())
+                                            .into(),
+                                    ),
+                                    Some(ticket.hash_and_format),
+                                )
+                                .await
+                                .unwrap();
+
+                            bytes
+                        }
+                    };
 
                     let Ok(signed) = bincode::deserialize::<Signed>(&bytes) else {
                         error!(
@@ -374,6 +405,11 @@ impl<S: Store> TheManService<S> {
                     conversation
                         .add_message(ticket.hash(), raw.last.as_ref().map(|ticket| ticket.hash()))
                         .await;
+
+                    info!(
+                        "Added message: {}",
+                        base64_serialize(&ticket.hash()).unwrap()
+                    );
 
                     let message = Message { raw, ticket };
                     self.messages.insert(message.ticket.hash(), message.clone());
@@ -524,6 +560,17 @@ impl<S: Store> TheManService<S> {
                         format: res.format,
                     },
                 };
+
+                self.blobs
+                    .store()
+                    .set_tag(
+                        iroh_blobs::Tag(
+                            format!("conversation-{}", base64_serialize(&ticket).unwrap()).into(),
+                        ),
+                        Some(ticket.hash_and_format),
+                    )
+                    .await
+                    .unwrap();
 
                 self.conversations.insert(
                     ticket.hash(),
@@ -841,10 +888,11 @@ impl<S: Store> Inner<S> {
 pub struct TheMan<S: Store> {
     inner: Arc<Inner<S>>,
     endpoint: Endpoint,
+    task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl<S: Store> TheMan<S> {
-    pub async fn spawn(blobs: Blobs<S>, endpoint: Endpoint, local_pool: &LocalPoolHandle) -> Self {
+    pub async fn spawn(blobs: Blobs<S>, endpoint: Endpoint) -> Self {
         let mut messages_to_resolv = Vec::new();
 
         for tag in blobs.store().tags().await.unwrap() {
@@ -861,10 +909,10 @@ impl<S: Store> TheMan<S> {
 
         let (sender, receiver) = tokio::sync::mpsc::channel(16);
 
-        {
+        let task = {
             let blobs = blobs.clone();
             let endpoint = endpoint.clone();
-            local_pool.spawn_detached(move || async move {
+            tokio::spawn(async move {
                 TheManService {
                     messages_to_resolv,
                     receiver,
@@ -880,8 +928,8 @@ impl<S: Store> TheMan<S> {
                 .await;
 
                 info!("TheMan Service stopped!");
-            });
-        }
+            })
+        };
 
         Self {
             inner: Arc::new(Inner {
@@ -889,6 +937,7 @@ impl<S: Store> TheMan<S> {
                 blobs,
             }),
             endpoint,
+            task: Arc::new(Mutex::new(Some(task))),
         }
     }
 
@@ -1055,8 +1104,12 @@ impl<S: Store> ProtocolHandler for TheMan<S> {
 
     fn shutdown(&self) -> Boxed<()> {
         let inner = self.inner.clone();
+        let task = self.task.clone();
         Box::pin(async move {
             inner.sender.write().await.take();
+            if let Some(task) = task.lock().await.take() {
+                task.await;
+            }
         })
     }
 }

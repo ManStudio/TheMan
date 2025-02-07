@@ -594,8 +594,7 @@ impl TheMan {
             .expect("Cannot create store")
             .build(local_pool.handle(), &endpoint);
 
-        let protocol =
-            protocol::TheMan::spawn(blobs.clone(), endpoint.clone(), local_pool.handle()).await;
+        let protocol = protocol::TheMan::spawn(blobs.clone(), endpoint.clone()).await;
 
         println!("NodeId: {}", base64_serialize(&endpoint.node_id()).unwrap());
 
