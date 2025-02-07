@@ -4,7 +4,7 @@ use iroh::SecretKey;
 use the_man::{base64_deserialize, base64_serialize, TheMan};
 use tracing::info;
 
-use crate::{protocol, screen};
+use crate::{protocol, screen, Data};
 use crate::{Message as TMessage, Screen};
 
 #[derive(Clone, Debug)]
@@ -21,18 +21,17 @@ pub struct Login {
     pub name: String,
     pub secret: String,
     pub error: Option<String>,
-    pub accounts: Vec<(String, SecretKey)>,
     pub loggingin: bool,
 }
 
 impl Login {
-    pub fn update(&mut self, message: Message) -> Task<TMessage> {
+    pub fn update(&mut self, data: &mut Data, message: Message) -> Task<TMessage> {
         match message {
             Message::Login(name, secret_key) => {
                 self.loggingin = true;
                 return Task::perform(
                     async move {
-                        let the_man = TheMan::new(secret_key).await;
+                        let the_man = TheMan::new(name.clone(), secret_key).await;
 
                         let message_receiver = the_man.subscribe_messages();
 
@@ -64,31 +63,33 @@ impl Login {
                     return Task::none();
                 };
 
-                self.accounts.push((std::mem::take(&mut self.name), secret));
+                data.accounts.push(crate::Account {
+                    name: std::mem::take(&mut self.name),
+                    secret,
+                });
 
                 self.secret.clear();
+                return Task::perform(async {}, |_| TMessage::Save);
             }
         }
 
         Task::none()
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self, data: &Data) -> Element<Message> {
         if self.loggingin {
             return W::center(W::text("Logging in...")).into();
         }
 
         let mut elements = Vec::<Element<'_, Message, Theme, Renderer>>::new();
-        for (name, secret) in self.accounts.iter() {
+        for account in data.accounts.iter() {
             elements.push(
                 W::button(W::row![
                     W::horizontal_space(),
-                    W::text(name.clone()),
-                    W::horizontal_space(),
-                    W::text(base64_serialize(&secret.public()).unwrap()),
+                    W::text(account.name.clone()),
                     W::horizontal_space()
                 ])
-                .on_press(Message::Login(name.clone(), secret.clone()))
+                .on_press(Message::Login(account.name.clone(), account.secret.clone()))
                 .into(),
             );
         }

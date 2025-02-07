@@ -25,7 +25,7 @@ use tracing::{debug, error, info};
 
 pub type Time = chrono::DateTime<chrono::Utc>;
 
-use crate::base64_serialize;
+use crate::{base64_deserialize, base64_serialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct Signed {
@@ -207,22 +207,24 @@ struct Conn {
     receiver: BoxStream<'static, Vec<Packet>>,
 }
 
-struct TheManService {
+struct TheManService<S: Store> {
+    messages_to_resolv: Vec<Ticket>,
+
     connections: BTreeMap<NodeId, Conn>,
     message_sender: watch::Sender<Option<Message>>,
     receiver: Receiver<ServiceRequest>,
     downloader: iroh_blobs::downloader::Downloader,
-    blobs: iroh_blobs::rpc::client::blobs::MemClient,
+    blobs: iroh_blobs::net_protocol::Blobs<S>,
     endpoint: iroh::Endpoint,
 
     messages: BTreeMap<Hash, Message>,
     conversations: BTreeMap<Hash, Conversation>,
 }
 
-impl TheManService {
+impl<S: Store> TheManService<S> {
     pub async fn run(&mut self) {
         loop {
-            let mut messages_to_add = Vec::<Ticket>::new();
+            let mut messages_to_add = std::mem::take(&mut self.messages_to_resolv);
 
             let recv = (!self.connections.is_empty()).then(|| {
                 futures_util::future::select_all(self.connections.iter_mut().map(
@@ -309,6 +311,17 @@ impl TheManService {
                         continue;
                     };
 
+                    self.blobs
+                        .store()
+                        .set_tag(
+                            iroh_blobs::Tag(
+                                format!("message-{}", base64_serialize(&ticket).unwrap()).into(),
+                            ),
+                            Some(ticket.hash_and_format),
+                        )
+                        .await
+                        .unwrap();
+
                     let Ok(signed) = bincode::deserialize::<Signed>(&bytes) else {
                         error!(
                             "Cannot parse signed message: {}",
@@ -346,8 +359,16 @@ impl TheManService {
                                 base64_serialize(&raw.conversation.hash()).unwrap(),
                                 base64_serialize(&ticket).unwrap()
                             );
-                        _ = self.blobs.delete_blob(ticket.hash()).await;
+                        _ = self.blobs.client().delete_blob(ticket.hash()).await;
                         continue;
+                    }
+
+                    if let Some(last) = raw.last.clone() {
+                        if !self.messages.contains_key(&last.hash()) {
+                            messages_to_add.push(last);
+                            messages_to_add.push(ticket);
+                            continue;
+                        }
                     }
 
                     conversation
@@ -391,12 +412,19 @@ impl TheManService {
             }
         }
 
-        let status = self.blobs.status(ticket.hash()).await.unwrap();
+        let status = self.blobs.client().status(ticket.hash()).await.unwrap();
 
         match status {
             iroh_blobs::rpc::client::blobs::BlobStatus::Complete { size } => {
                 println!("Blob with size: {size}");
-                Some(self.blobs.read_to_bytes(ticket.hash()).await.unwrap())
+
+                Some(
+                    self.blobs
+                        .client()
+                        .read_to_bytes(ticket.hash())
+                        .await
+                        .unwrap(),
+                )
             }
             _ => None,
         }
@@ -481,7 +509,7 @@ impl TheManService {
                 let bytes =
                     bincode::serialize(&Signed::new(self.endpoint.secret_key(), bytes)).unwrap();
 
-                let Ok(res) = self.blobs.add_bytes(bytes).await else {
+                let Ok(res) = self.blobs.client().add_bytes(bytes).await else {
                     error!("Cannot add bytes");
                     if sender.send(None).is_err() {
                         error!("Cannot send");
@@ -565,7 +593,7 @@ impl TheManService {
                 let bytes =
                     bincode::serialize(&Signed::new(self.endpoint.secret_key(), bytes)).unwrap();
 
-                let Ok(res) = self.blobs.add_bytes(bytes).await else {
+                let Ok(res) = self.blobs.client().add_bytes(bytes).await else {
                     error!("Cannot add message as blob");
                     if sender.send(None).is_err() {
                         error!("Cannot send");
@@ -580,6 +608,17 @@ impl TheManService {
                         format: res.format,
                     },
                 };
+
+                self.blobs
+                    .store()
+                    .set_tag(
+                        iroh_blobs::Tag(
+                            format!("message-{}", base64_serialize(&ticket).unwrap()).into(),
+                        ),
+                        Some(ticket.hash_and_format),
+                    )
+                    .await
+                    .unwrap();
 
                 let last = raw_message.last.as_ref().map(|ticket| ticket.hash());
 
@@ -806,6 +845,20 @@ pub struct TheMan<S: Store> {
 
 impl<S: Store> TheMan<S> {
     pub async fn spawn(blobs: Blobs<S>, endpoint: Endpoint, local_pool: &LocalPoolHandle) -> Self {
+        let mut messages_to_resolv = Vec::new();
+
+        for tag in blobs.store().tags().await.unwrap() {
+            let Ok(tag) = tag else {
+                continue;
+            };
+
+            if tag.0 .0.starts_with(b"message-") {
+                let ticket_data = tag.0 .0.strip_prefix(b"message-").unwrap();
+                let ticket = base64_deserialize::<Ticket>(ticket_data).expect("Cannot deserialize");
+                messages_to_resolv.push(ticket);
+            }
+        }
+
         let (sender, receiver) = tokio::sync::mpsc::channel(16);
 
         {
@@ -813,14 +866,15 @@ impl<S: Store> TheMan<S> {
             let endpoint = endpoint.clone();
             local_pool.spawn_detached(move || async move {
                 TheManService {
+                    messages_to_resolv,
                     receiver,
                     downloader: blobs.downloader().clone(),
-                    blobs: blobs.client().clone(),
                     messages: BTreeMap::default(),
                     conversations: BTreeMap::default(),
                     endpoint,
                     message_sender: watch::Sender::new(None),
                     connections: BTreeMap::new(),
+                    blobs,
                 }
                 .run()
                 .await;

@@ -210,7 +210,7 @@ enum ServiceRequest {
 }
 
 struct TheManService {
-    protocol: ProtocolTheMan<iroh_blobs::store::mem::Store>,
+    protocol: ProtocolTheMan<iroh_blobs::store::fs::Store>,
     node_id: NodeId,
     message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
     receiver: tokio::sync::mpsc::Receiver<ServiceRequest>,
@@ -223,7 +223,7 @@ struct TheManService {
 
 impl TheManService {
     pub fn new(
-        protocol: ProtocolTheMan<iroh_blobs::store::mem::Store>,
+        protocol: ProtocolTheMan<iroh_blobs::store::fs::Store>,
         node_id: NodeId,
         message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
         receiver: tokio::sync::mpsc::Receiver<ServiceRequest>,
@@ -555,7 +555,7 @@ impl TheManService {
 pub struct TheMan {
     node: Router,
     gossip: iroh_gossip::net::Gossip,
-    protocol: ProtocolTheMan<iroh_blobs::store::mem::Store>,
+    protocol: ProtocolTheMan<iroh_blobs::store::fs::Store>,
     local_pool: Arc<iroh_blobs::util::local_pool::LocalPool>,
     message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
     sender: tokio::sync::mpsc::Sender<ServiceRequest>,
@@ -573,7 +573,7 @@ impl std::fmt::Debug for TheMan {
 }
 
 impl TheMan {
-    pub async fn new(secret_key: SecretKey) -> Self {
+    pub async fn new(name: String, secret_key: SecretKey) -> Self {
         let endpoint = iroh::Endpoint::builder()
             .discovery_n0()
             .discovery_dht()
@@ -589,7 +589,10 @@ impl TheMan {
 
         let local_pool = iroh_blobs::util::local_pool::LocalPool::default();
 
-        let blobs = iroh_blobs::net_protocol::Blobs::memory().build(local_pool.handle(), &endpoint);
+        let blobs = iroh_blobs::net_protocol::Blobs::persistent(format!("{name}-store"))
+            .await
+            .expect("Cannot create store")
+            .build(local_pool.handle(), &endpoint);
 
         let protocol =
             protocol::TheMan::spawn(blobs.clone(), endpoint.clone(), local_pool.handle()).await;
@@ -645,7 +648,7 @@ impl TheMan {
     pub async fn get_conversation(
         &self,
         hash: iroh_blobs::Hash,
-    ) -> Option<ConversationHandle<iroh_blobs::store::mem::Store>> {
+    ) -> Option<ConversationHandle<iroh_blobs::store::fs::Store>> {
         self.protocol.get_conversation(hash).await
     }
 
@@ -656,7 +659,7 @@ impl TheMan {
     pub async fn create(
         &self,
         raw: RawConversation,
-    ) -> Option<ConversationHandle<iroh_blobs::store::mem::Store>> {
+    ) -> Option<ConversationHandle<iroh_blobs::store::fs::Store>> {
         self.protocol.create(raw).await
     }
 

@@ -1,18 +1,12 @@
-use std::{collections::VecDeque, convert::Infallible, sync::Arc, time::Duration};
+use std::{convert::Infallible, sync::Arc};
 
-use base64::prelude::*;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use iced::{
     advanced::graphics::futures::MaybeSend, widget as W, Element, Length, Renderer, Subscription,
     Task, Theme,
 };
-use iroh::{protocol::Router, NodeId};
-use serde::{de::DeserializeOwned, Serialize};
-use the_man::{
-    base64_deserialize, base64_serialize,
-    protocol::{self, RawConversation, Ticket},
-};
-use tracing::{error, info, instrument::WithSubscriber};
+use serde::{Deserialize, Serialize};
+use the_man::protocol;
+use tracing::{error, info};
 
 mod screen;
 
@@ -22,24 +16,36 @@ pub enum Screen {
     Dashboard(screen::dashboard::Dashboard),
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct Account {
+    name: String,
+    secret: iroh::SecretKey,
+}
+
 pub struct TheMan {
+    data: Data,
     screen: Screen,
     theme: Theme,
     popups: Vec<Popup<Message>>,
 }
 
+#[derive(Default, Serialize, Deserialize)]
+pub struct Data {
+    accounts: Vec<Account>,
+}
+
 impl TheMan {
-    pub fn new() -> Self {
+    pub fn new(data: Data) -> Self {
         Self {
             screen: Screen::Login(screen::login::Login {
                 name: String::default(),
                 secret: String::default(),
                 error: None,
-                accounts: Vec::default(),
                 loggingin: false,
             }),
             theme: Theme::Dark,
             popups: vec![],
+            data,
         }
     }
 }
@@ -51,6 +57,7 @@ pub enum Message {
     ChangeScreen(Screen),
     Login(screen::login::Message),
     Dashboard(screen::dashboard::Message),
+    Save,
 }
 
 impl From<Message> for screen::dashboard::Message {
@@ -102,7 +109,7 @@ impl TheMan {
             }
             Message::Login(message) => {
                 if let Screen::Login(login) = &mut self.screen {
-                    return login.update(message);
+                    return login.update(&mut self.data, message);
                 }
             }
             Message::Dashboard(message) => {
@@ -110,13 +117,19 @@ impl TheMan {
                     return dashboard.update(message);
                 }
             }
+            Message::Save => {
+                let file =
+                    std::fs::File::create("the-man.cbor").expect("Cannot create the-man.cbor");
+                ciborium::into_writer(&self.data, file).expect("Cannot save");
+                info!("Saved");
+            }
         }
         Task::none()
     }
 
     fn view(&self) -> Element<Message, Theme, Renderer> {
         match &self.screen {
-            Screen::Login(login) => login.view().map(Message::Login),
+            Screen::Login(login) => login.view(&self.data).map(Message::Login),
             Screen::Dashboard(dashboard) => {
                 let body = dashboard.view().map(Message::Dashboard);
                 if let Some(popup) = self.popups.last() {
@@ -146,13 +159,7 @@ impl TheMan {
     }
 }
 
-const CHANNELS: usize = 1;
-const SAMPLE_RATE: usize = 48000;
-const BITRATE: usize = 64000;
-const FRAME_SIZE: usize = SAMPLE_RATE / (1000 / 5); // MS
-
-#[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
+fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -160,68 +167,24 @@ async fn main() -> Result<(), anyhow::Error> {
         )
         .init();
 
-    // audio_testing_opus();
-
-    // return Ok(());
-
     let app = iced::application("TheMan", TheMan::update, TheMan::view)
         .subscription(TheMan::subscription);
-    app.run_with(|| (TheMan::new(), Task::none())).unwrap();
 
-    return Ok(());
+    let data = 'outer: {
+        let Ok(data) = std::fs::read("the-man.cbor") else {
+            error!("Cannot read file, the-man.cbor");
+            break 'outer Data::default();
+        };
 
-    // let endpoint = iroh::Endpoint::builder()
-    //     .discovery_n0()
-    //     .discovery_dht()
-    //     .bind()
-    //     .await?;
+        let Ok(data) = ciborium::from_reader::<Data, _>(std::io::Cursor::new(data)) else {
+            error!("Cannot parse data from file, the-man.cbor");
+            break 'outer Data::default();
+        };
 
-    // let gossip = iroh_gossip::net::Gossip::builder()
-    //     .spawn(endpoint.clone())
-    //     .await?;
+        data
+    };
 
-    // let local_pool = iroh_blobs::util::local_pool::LocalPool::default();
-
-    // let blobs = iroh_blobs::net_protocol::Blobs::memory().build(local_pool.handle(), &endpoint);
-
-    // let the_man = protocol::TheMan::spawn(
-    //     gossip.clone(),
-    //     blobs.clone(),
-    //     endpoint.clone(),
-    //     local_pool.handle(),
-    // )
-    // .await;
-
-    // info!("Create node");
-    // let node = iroh::protocol::Router::builder(endpoint)
-    //     .accept(iroh_gossip::ALPN, gossip.clone())
-    //     .accept(iroh_blobs::ALPN, blobs.clone())
-    //     .accept(protocol::ALPN, the_man.clone())
-    //     .spawn()
-    //     .await?;
-
-    // println!(
-    //     "NodeId: {}",
-    //     base64_serialize(&node.endpoint().node_id()).unwrap()
-    // );
-
-    // let mut buffer = [0; 1024];
-    // let mut str = String::default();
-
-    // let mut stdin = tokio::io::stdin();
-    // loop {
-    //     select! {
-    //         Ok(len) = stdin.read(&mut buffer) => {
-    //             if handle_cli(len, &mut str, &mut buffer, &node, &the_man).await {
-    //                 break;
-    //             }
-    //         }
-    //     }
-    // }
-
-    // node.shutdown().await?;
-
-    // Ok(())
+    app.run_with(|| (TheMan::new(data), Task::none())).unwrap();
 }
 
 pub trait DynClone {
@@ -334,73 +297,6 @@ impl<TO: MaybeSend + Sync + Clone + 'static, FROM: MaybeSend + Sync + Clone + 's
     fn finish(&self) -> Option<TO> {
         self.popup.0.finish().map(|m| (self.map_from_to)(m))
     }
-}
-
-fn setup_audio() -> (
-    cpal::Stream,
-    cpal::Stream,
-    std::sync::mpsc::Receiver<f32>,
-    std::sync::mpsc::Sender<f32>,
-) {
-    let host = cpal::default_host();
-    dbg!(host.id());
-
-    let input_device = host.default_input_device().expect("Input device");
-    info!("Input Device: {:?}", input_device.name().unwrap());
-
-    let (input_sender, input_receiver) = std::sync::mpsc::channel::<f32>();
-
-    let input_stream = input_device
-        .build_input_stream(
-            &cpal::StreamConfig {
-                channels: CHANNELS as u16,
-                sample_rate: cpal::SampleRate(48000),
-                buffer_size: cpal::BufferSize::Fixed(960),
-            },
-            move |data: &[f32], info| {
-                for sample in data {
-                    input_sender.send(*sample).expect("Cannot send");
-                }
-            },
-            |err| error!("Input {err}"),
-            None,
-        )
-        .unwrap();
-
-    let output_device = host.default_output_device().expect("Output device");
-    info!("Output Device: {:?}", output_device.name());
-
-    let output_config = output_device.default_output_config().unwrap();
-    dbg!(output_config);
-    let mut buffer = VecDeque::default();
-    let mut ii = 0.05;
-    for i in 0..48000 * 4 {
-        buffer.push_back((i as f32 * ii).sin() * 0.1);
-        if i % (48000 / 8) == 0 {
-            ii += 0.01;
-        }
-    }
-
-    let (output_sender, output_receiver) = std::sync::mpsc::channel::<f32>();
-
-    let output_stream = output_device
-        .build_output_stream(
-            &cpal::StreamConfig {
-                channels: CHANNELS as u16,
-                sample_rate: cpal::SampleRate(48000),
-                buffer_size: cpal::BufferSize::Fixed(960),
-            },
-            move |data: &mut [f32], info| {
-                for sample in data {
-                    *sample = output_receiver.try_recv().unwrap_or(0.0);
-                }
-            },
-            |err| error!("Output: {err}"),
-            None,
-        )
-        .unwrap();
-
-    (input_stream, output_stream, input_receiver, output_sender)
 }
 
 pub struct ViewSensor<Message: Clone> {
