@@ -274,7 +274,11 @@ impl<S: Store> TheManService<S> {
                         continue;
                     }
 
-                    let Some(bytes) = self.download(&ticket).await else {
+                    let Some(bytes) = self.get_signed_data(&ticket).await else {
+                        error!(
+                            "Cannot get conversation: {}",
+                            base64_serialize(&ticket.hash()).unwrap()
+                        );
                         continue;
                     };
 
@@ -290,23 +294,7 @@ impl<S: Store> TheManService<S> {
                         .await
                         .unwrap();
 
-                    let Ok(signed) = bincode::deserialize::<Signed>(&bytes) else {
-                        error!(
-                            "Cannot parse signed conversation: {}",
-                            base64_serialize(&ticket.hash()).unwrap()
-                        );
-                        continue;
-                    };
-
-                    let Ok(bytes) = signed.get(&ticket.owner_id) else {
-                        error!(
-                            "Cannot verify signiture of conversation: {}",
-                            base64_serialize(&ticket.hash()).unwrap()
-                        );
-                        continue;
-                    };
-
-                    let Ok(raw) = bincode::deserialize::<RawConversation>(bytes) else {
+                    let Ok(raw) = bincode::deserialize::<RawConversation>(&bytes) else {
                         error!(
                             "Cannot parse conversation: {}",
                             base64_serialize(&ticket.hash()).unwrap()
@@ -324,63 +312,37 @@ impl<S: Store> TheManService<S> {
                     );
                 }
 
+                let mut skip = false;
                 for ticket in std::mem::take(&mut messages_to_add) {
                     if self.messages.contains_key(&ticket.hash()) {
                         continue;
                     }
 
-                    let status = self
-                        .blobs
+                    if skip {
+                        messages_to_add.push(ticket);
+                        continue;
+                    }
+
+                    let Some(bytes) = self.get_signed_data(&ticket).await else {
+                        error!(
+                            "Cannot get message: {}",
+                            base64_serialize(&ticket.hash()).unwrap()
+                        );
+                        continue;
+                    };
+
+                    self.blobs
                         .store()
-                        .entry_status(&ticket.hash())
+                        .set_tag(
+                            iroh_blobs::Tag(
+                                format!("message-{}", base64_serialize(&ticket).unwrap()).into(),
+                            ),
+                            Some(ticket.hash_and_format),
+                        )
                         .await
                         .unwrap();
-                    let bytes = match status {
-                        iroh_blobs::store::EntryStatus::Complete => self
-                            .blobs
-                            .client()
-                            .read_to_bytes(ticket.hash())
-                            .await
-                            .unwrap(),
-                        iroh_blobs::store::EntryStatus::Partial
-                        | iroh_blobs::store::EntryStatus::NotFound => {
-                            let Some(bytes) = self.download(&ticket).await else {
-                                continue;
-                            };
 
-                            self.blobs
-                                .store()
-                                .set_tag(
-                                    iroh_blobs::Tag(
-                                        format!("message-{}", base64_serialize(&ticket).unwrap())
-                                            .into(),
-                                    ),
-                                    Some(ticket.hash_and_format),
-                                )
-                                .await
-                                .unwrap();
-
-                            bytes
-                        }
-                    };
-
-                    let Ok(signed) = bincode::deserialize::<Signed>(&bytes) else {
-                        error!(
-                            "Cannot parse signed message: {}",
-                            base64_serialize(&ticket.hash()).unwrap()
-                        );
-                        continue;
-                    };
-
-                    let Ok(bytes) = signed.get(&ticket.owner_id) else {
-                        error!(
-                            "Cannot verify signiture of message: {}",
-                            base64_serialize(&ticket.hash()).unwrap()
-                        );
-                        continue;
-                    };
-
-                    let Ok(raw) = bincode::deserialize::<RawMessage>(bytes) else {
+                    let Ok(raw) = bincode::deserialize::<RawMessage>(&bytes) else {
                         error!(
                             "Cannot parse message: {}",
                             base64_serialize(&ticket.hash()).unwrap()
@@ -392,6 +354,7 @@ impl<S: Store> TheManService<S> {
                     else {
                         conversations_to_add.push(raw.conversation.clone());
                         messages_to_add.push(ticket);
+                        skip = true;
                         continue;
                     };
 
@@ -409,6 +372,7 @@ impl<S: Store> TheManService<S> {
                         if !self.messages.contains_key(&last.hash()) {
                             messages_to_add.push(last);
                             messages_to_add.push(ticket);
+                            skip = true;
                             continue;
                         }
                     }
@@ -475,6 +439,44 @@ impl<S: Store> TheManService<S> {
             }
             _ => None,
         }
+    }
+
+    async fn get_signed_data(&self, ticket: &Ticket) -> Option<Vec<u8>> {
+        let status = self
+            .blobs
+            .store()
+            .entry_status(&ticket.hash())
+            .await
+            .unwrap();
+        let bytes = match status {
+            iroh_blobs::store::EntryStatus::Complete => self
+                .blobs
+                .client()
+                .read_to_bytes(ticket.hash())
+                .await
+                .unwrap(),
+            iroh_blobs::store::EntryStatus::Partial | iroh_blobs::store::EntryStatus::NotFound => {
+                self.download(ticket).await?
+            }
+        };
+
+        let Ok(signed) = bincode::deserialize::<Signed>(&bytes) else {
+            error!(
+                "Cannot parse signed ticket data: {}",
+                base64_serialize(&ticket).unwrap()
+            );
+            return None;
+        };
+
+        let Ok(bytes) = signed.get(&ticket.owner_id) else {
+            error!(
+                "Cannot verify signiture of ticket: {}",
+                base64_serialize(&ticket).unwrap()
+            );
+            return None;
+        };
+
+        Some(bytes.to_vec())
     }
 
     pub async fn handle_request(
@@ -762,7 +764,7 @@ impl<S: Store> TheManService<S> {
                             &Packet::SendMessage(msg.ticket.clone()),
                             &mut buffer,
                         )
-                        .expect("Cannot serialize Token???");
+                        .expect("Cannot serialize Ticket???");
                         match connection.sender.write_all(&buffer).await {
                             Ok(_) => {}
                             Err(err) => {
