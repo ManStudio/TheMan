@@ -89,26 +89,30 @@ impl DPopupCreateConversation {
     fn run(&mut self, ui: &mut egui::Ui, data: &mut Data) -> Option<EventDashboard> {
         let mut res = None;
         ui.horizontal(|ui| {
-            egui::ScrollArea::vertical().id_salt("left").show(ui, |ui| {
+            ui.vertical(|ui| {
                 ui.heading("Known");
-                for node in data.knows_node_id.iter() {
-                    if ui
-                        .button(format!("{}", base64_serialize(node).unwrap()))
-                        .clicked()
-                    {
-                        self.nodes.push(node.clone());
-                    }
-                }
-            });
-            ui.separator();
-            egui::ScrollArea::vertical()
-                .id_salt("right")
-                .show(ui, |ui| {
-                    ui.heading("In Conversation");
-                    for node in self.nodes.iter() {
-                        ui.label(format!("{}", base64_serialize(node).unwrap()));
+                egui::ScrollArea::vertical().id_salt("left").show(ui, |ui| {
+                    for node in data.knows_node_id.iter() {
+                        if ui
+                            .button(base64_serialize(node).unwrap().to_string())
+                            .clicked()
+                        {
+                            self.nodes.push(*node);
+                        }
                     }
                 });
+            });
+            ui.separator();
+            ui.vertical(|ui| {
+                ui.heading("In Conversation");
+                egui::ScrollArea::vertical()
+                    .id_salt("right")
+                    .show(ui, |ui| {
+                        for node in self.nodes.iter() {
+                            ui.label(base64_serialize(node).unwrap().to_string());
+                        }
+                    });
+            });
         });
         ui.separator();
         if ui.button("Create").clicked() {
@@ -262,6 +266,11 @@ impl StateDashboard {
                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                 .show(ui, |ui| {
                     ui.label("Known peers");
+                    ui.vertical(|ui| {
+                        for known in data.knows_node_id.iter() {
+                            ui.label(base64_serialize(known).unwrap().to_string());
+                        }
+                    })
                 });
         });
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -281,6 +290,12 @@ impl StateDashboard {
                         .push(DPopup::CreateConversation(DPopupCreateConversation {
                             nodes: vec![],
                         }));
+                }
+
+                if ui.button("Recover").clicked() {
+                    self.popups.push(DPopup::Recover(DPopupRecover {
+                        ticket_text: String::default(),
+                    }));
                 }
             });
             egui::TopBottomPanel::bottom("status-panel").show_inside(ui, |ui| {
@@ -349,21 +364,43 @@ impl StateDashboard {
                                                 let last_selected = selected;
                                                 ui.horizontal(|ui| {
                                                     ui.checkbox(&mut selected, "");
-                                                    if let Some(message) = message {
-                                                        ui.label(&message.raw.data);
-                                                    } else {
-                                                        ui.group(|ui| {
+                                                    ui.group(|ui| {
+                                                        if let Some(message) = message {
                                                             ui.horizontal(|ui| {
+                                                                ui.label(format!(
+                                                                    "From: {}",
+                                                                    base64_serialize(
+                                                                        &message.ticket.owner_id
+                                                                    )
+                                                                    .unwrap()
+                                                                ));
+                                                                ui.label(&message.raw.data);
+                                                            });
+                                                        } else {
+                                                            ui.horizontal(|ui| {
+                                                                ui.spinner();
                                                                 ui.label(
                                                                     base64_serialize(&entry.hash())
                                                                         .unwrap()
                                                                         .to_string(),
                                                                 );
-
-                                                                ui.spinner();
                                                             });
-                                                        });
-                                                    }
+                                                        }
+                                                    })
+                                                    .response
+                                                    .context_menu(|ui| {
+                                                        if let Some(msg) = message {
+                                                            if ui
+                                                                .small_button("Copy token")
+                                                                .clicked()
+                                                            {
+                                                                ui.ctx().copy_text(
+                                                                    base64_serialize(&msg.ticket)
+                                                                        .unwrap(),
+                                                                );
+                                                            }
+                                                        }
+                                                    });
                                                 });
 
                                                 if last_selected != selected {
