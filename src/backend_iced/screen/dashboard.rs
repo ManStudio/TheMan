@@ -10,9 +10,9 @@ use serde::Serialize;
 use the_man::{base64_deserialize, base64_serialize, TheMan};
 use tracing::{error, info};
 
-use crate::protocol::{RawMessage, Ticket};
-use crate::{protocol, Popup, ViewSensor};
-use crate::{Message as TMessage, TPopup};
+use super::super::{Message as TMessage, TPopup};
+use super::super::{Popup, ViewSensor};
+use crate::protocol::{self, RawMessage, Ticket};
 
 #[derive(Clone)]
 pub struct PopupGetList<

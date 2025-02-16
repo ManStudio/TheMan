@@ -28,3 +28,4 @@ thiserror = "2.0.11"
 tokio = { version = "1.43.0", features = ["bytes", "fs", "io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+eframe = {version = "0.31.0" }

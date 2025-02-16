@@ -4,8 +4,8 @@ use iroh::SecretKey;
 use the_man::{base64_deserialize, base64_serialize, TheMan};
 use tracing::info;
 
-use crate::{protocol, screen, Data};
-use crate::{Message as TMessage, Screen};
+use super::super::{screen, Data};
+use super::super::{Message as TMessage, Screen};
 
 #[derive(Clone, Debug)]
 pub enum Message {

@@ -117,10 +117,21 @@ impl TreeEntry {
         self.prev.read().await.clone()
     }
 
+    pub fn blocking_prev(&self) -> Option<Arc<TreeEntry>> {
+        self.prev.blocking_read().clone()
+    }
+
     pub async fn next(&self) -> Option<Arc<TreeEntry>> {
         self.nexts
             .read()
             .await
+            .first()
+            .and_then(|entry| entry.upgrade())
+    }
+
+    pub fn blocking_next(&self) -> Option<Arc<TreeEntry>> {
+        self.nexts
+            .blocking_read()
             .first()
             .and_then(|entry| entry.upgrade())
     }
@@ -777,6 +788,7 @@ impl<S: Store> TheManService<S> {
     }
 }
 
+#[derive(Clone)]
 pub struct ConversationHandle<S: Store> {
     inner: Arc<Inner<S>>,
     conversation: Hash,
@@ -786,6 +798,10 @@ pub struct ConversationHandle<S: Store> {
 impl<S: Store> ConversationHandle<S> {
     pub fn hash(&self) -> &Hash {
         &self.conversation
+    }
+
+    pub async fn ticket(&self) -> Ticket {
+        self.get().await.ticket
     }
 
     pub async fn get(&self) -> Conversation {
