@@ -556,7 +556,6 @@ pub struct TheMan {
     node: Router,
     gossip: iroh_gossip::net::Gossip,
     protocol: ProtocolTheMan<iroh_blobs::store::fs::Store>,
-    local_pool: Arc<iroh_blobs::util::local_pool::LocalPool>,
     message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
     sender: tokio::sync::mpsc::Sender<ServiceRequest>,
 
@@ -576,7 +575,6 @@ impl TheMan {
     pub async fn new(name: String, secret_key: SecretKey) -> Self {
         let endpoint = iroh::Endpoint::builder()
             .discovery_n0()
-            .discovery_dht()
             .secret_key(secret_key)
             .bind()
             .await
@@ -587,12 +585,10 @@ impl TheMan {
             .await
             .unwrap();
 
-        let local_pool = iroh_blobs::util::local_pool::LocalPool::default();
-
         let blobs = iroh_blobs::net_protocol::Blobs::persistent(format!("{name}-store"))
             .await
             .expect("Cannot create store")
-            .build(local_pool.handle(), &endpoint);
+            .build(&endpoint);
 
         let protocol = protocol::TheMan::spawn(blobs.clone(), endpoint.clone()).await;
 
@@ -625,7 +621,6 @@ impl TheMan {
             node,
             gossip,
             protocol,
-            local_pool: Arc::new(local_pool),
             task: Arc::new(task),
             message_receiver,
             sender,

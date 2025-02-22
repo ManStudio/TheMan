@@ -1,20 +1,23 @@
-use iroh::NodeId;
-use serde::{Deserialize, Serialize};
-use the_man::protocol;
-use tracing::error;
+use std::collections::BTreeMap;
 
-mod backend_eframe;
-mod backend_iced;
+use iroh::NodeId;
+use iroh_blobs::Hash;
+use serde::{Deserialize, Serialize};
+use tracing::error;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Account {
     name: String,
     secret: iroh::SecretKey,
+    #[serde(default)]
+    known_as: BTreeMap<Hash, String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Data {
+    #[serde(default)]
     accounts: Vec<Account>,
+    #[serde(default)]
     knows_node_id: Vec<NodeId>,
 }
 
@@ -48,22 +51,26 @@ fn main() {
         )
         .init();
 
-    let Ok(backend) = std::env::var("BACKEND") else {
-        eprintln!("Backend is not set!");
-        eprintln!("BACKEND=eframe");
-        eprintln!("BACKEND=iced");
+    let Ok(backend) = std::env::var("GUI") else {
+        eprintln!("Gui backend is not set!");
+        eprintln!("GUI=eframe");
+        #[cfg(feature = "gui_iced")]
+        eprintln!("GUI=iced");
         return;
     };
 
     let data = Data::load();
     match backend.trim() {
         "eframe" => run_egui(data),
+        #[cfg(feature = "gui_iced")]
         "iced" => run_iced(data),
         _ => {
             eprintln!("Invalid backend {backend}");
         }
     }
 }
+
+mod backend_eframe;
 
 fn run_egui(data: Data) {
     use backend_eframe::App;
@@ -80,6 +87,10 @@ fn run_egui(data: Data) {
     .unwrap();
 }
 
+#[cfg(feature = "gui_iced")]
+mod backend_iced;
+
+#[cfg(feature = "gui_iced")]
 fn run_iced(data: Data) {
     use backend_iced::TheMan;
     use iced::Task;

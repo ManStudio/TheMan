@@ -1,12 +1,13 @@
 use std::{
     collections::BTreeMap,
+    future::Future,
     pin::Pin,
     sync::{Arc, Weak},
 };
 
 use chrono::Utc;
 use ed25519::Signature;
-use futures_lite::{future::Boxed, StreamExt};
+use futures_util::StreamExt;
 use iroh::{
     endpoint::{self, Connection, RecvStream, SendStream},
     protocol::ProtocolHandler,
@@ -214,7 +215,7 @@ pub enum ServiceRequest {
 struct Conn {
     connection: Connection,
     sender: SendStream,
-    receiver: Pin<Box<dyn futures_lite::Stream<Item = Vec<Packet>> + Send + Sync>>,
+    receiver: Pin<Box<dyn futures_util::Stream<Item = Vec<Packet>> + Send + Sync>>,
 }
 
 struct TheManService<S: Store> {
@@ -486,7 +487,8 @@ impl<S: Store> TheManService<S> {
     ) {
         match request {
             ServiceRequest::Add(connection, (mut sender, receiver)) => {
-                let node_id = endpoint::get_remote_node_id(&connection)
+                let node_id = connection
+                    .remote_node_id()
                     .expect("Cannot get connection node_id");
                 info!("Connected to: {}", base64_serialize(&node_id).unwrap());
                 let mut buffer = Vec::default();
@@ -496,7 +498,7 @@ impl<S: Store> TheManService<S> {
                     .await
                     .expect("Cannot write welcome packet");
 
-                let receiver = futures_lite::stream::unfold(
+                let receiver = futures_util::stream::unfold(
                     (receiver, [0u8; 1024]),
                     move |(mut receiver, mut buffer)| async move {
                         match receiver.read(&mut buffer).await {
@@ -1101,7 +1103,10 @@ impl<S: Store> TheMan<S> {
 }
 
 impl<S: Store> ProtocolHandler for TheMan<S> {
-    fn accept(&self, connecting: iroh::endpoint::Connecting) -> Boxed<anyhow::Result<()>> {
+    fn accept(
+        &self,
+        connecting: iroh::endpoint::Connecting,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>> {
         let inner = self.inner.clone();
         Box::pin(async move {
             info!("Connecting..");
@@ -1120,7 +1125,7 @@ impl<S: Store> ProtocolHandler for TheMan<S> {
         })
     }
 
-    fn shutdown(&self) -> Boxed<()> {
+    fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
         let inner = self.inner.clone();
         let task = self.task.clone();
         Box::pin(async move {

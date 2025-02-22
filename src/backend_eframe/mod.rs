@@ -1,7 +1,8 @@
-use std::{pin::Pin, sync::Arc};
+use std::{collections::BTreeMap, pin::Pin, sync::Arc};
 
 use eframe::egui;
 use iroh::NodeId;
+use serde::Serialize;
 use the_man::{base64_deserialize, base64_serialize, protocol};
 use tracing::info;
 
@@ -39,6 +40,7 @@ impl StateLogin {
                     data.accounts.push(Account {
                         name: std::mem::take(&mut self.name),
                         secret,
+                        known_as: BTreeMap::default(),
                     });
                     self.secret.clear();
                     data.save();
@@ -54,7 +56,7 @@ impl StateLogin {
             egui::ScrollArea::vertical()
                 .auto_shrink(false)
                 .show(ui, |ui| {
-                    for account in data.accounts.iter() {
+                    for (i, account) in data.accounts.iter().enumerate() {
                         if ui.button(&account.name).clicked() {
                             let name = account.name.clone();
                             let secret = account.secret.clone();
@@ -64,7 +66,7 @@ impl StateLogin {
                                 let subscription_messages = the_man.subscribe_messages();
 
                                 Event::SetState(State::Dashboard(StateDashboard {
-                                    name,
+                                    account_id: i,
                                     the_man,
                                     subscription_messages,
                                     conversations: vec![],
@@ -185,7 +187,7 @@ struct Conversation {
 }
 
 struct StateDashboard {
-    name: String,
+    account_id: usize,
     the_man: the_man::TheMan,
     subscription_messages: tokio::sync::watch::Receiver<Option<protocol::Message>>,
 
@@ -300,7 +302,7 @@ impl StateDashboard {
             });
             egui::TopBottomPanel::bottom("status-panel").show_inside(ui, |ui| {
                 ui.heading("Status");
-                if ui.button(&self.name).clicked() {
+                if ui.button(&data.accounts[self.account_id].name).clicked() {
                     ui.ctx()
                         .copy_text(base64_serialize(&self.the_man.node_id()).unwrap());
                 }
@@ -324,12 +326,13 @@ impl StateDashboard {
                     }
                 });
         });
+
         if let Some(conversation) = &mut self.conversation {
             egui::SidePanel::right("conversation-panel").show(ctx, |ui| {
                 ui.heading("Conversation");
                 egui::ScrollArea::horizontal()
                     .auto_shrink(false)
-                    .max_height(ui.available_size().y - 20.)
+                    .max_height(ui.available_size().y - 30.)
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                     .show(ui, |ui| {
                         ui.horizontal_top(|ui| {
@@ -356,6 +359,7 @@ impl StateDashboard {
                                                 }
                                             }
 
+                                            let mut last: Option<NodeId> = None;
                                             for (entry, message) in tail.messages.iter() {
                                                 let mut selected = conversation
                                                     .selected
@@ -366,15 +370,41 @@ impl StateDashboard {
                                                     ui.checkbox(&mut selected, "");
                                                     ui.group(|ui| {
                                                         if let Some(message) = message {
-                                                            ui.horizontal(|ui| {
-                                                                ui.label(format!(
-                                                                    "From: {}",
-                                                                    base64_serialize(
-                                                                        &message.ticket.owner_id
-                                                                    )
-                                                                    .unwrap()
-                                                                ));
-                                                                ui.label(&message.raw.data);
+                                                            ui.vertical(|ui| {
+                                                                if last
+                                                                    != Some(message.ticket.owner_id)
+                                                                {
+                                                                    ui.horizontal(|ui| {
+                                                                        ui.label("From: ");
+                                                                        nameble_info(
+                                                                            ui,
+                                                                            data,
+                                                                            self.account_id,
+                                                                            &message
+                                                                                .ticket
+                                                                                .owner_id,
+                                                                        );
+                                                                    });
+                                                                    last = Some(
+                                                                        message.ticket.owner_id,
+                                                                    );
+                                                                }
+                                                                ui.label(&message.raw.data)
+                                                                    .context_menu(|ui| {
+                                                                        if ui
+                                                                            .small_button(
+                                                                                "Copy token",
+                                                                            )
+                                                                            .clicked()
+                                                                        {
+                                                                            ui.ctx().copy_text(
+                                                                                base64_serialize(
+                                                                                    &message.ticket,
+                                                                                )
+                                                                                .unwrap(),
+                                                                            );
+                                                                        }
+                                                                    });
                                                             });
                                                         } else {
                                                             ui.horizontal(|ui| {
@@ -388,19 +418,6 @@ impl StateDashboard {
                                                         }
                                                     })
                                                     .response
-                                                    .context_menu(|ui| {
-                                                        if let Some(msg) = message {
-                                                            if ui
-                                                                .small_button("Copy token")
-                                                                .clicked()
-                                                            {
-                                                                ui.ctx().copy_text(
-                                                                    base64_serialize(&msg.ticket)
-                                                                        .unwrap(),
-                                                                );
-                                                            }
-                                                        }
-                                                    });
                                                 });
 
                                                 if last_selected != selected {
@@ -723,5 +740,43 @@ impl eframe::App for App {
         }
 
         self.state.run(ctx, &mut self.data, &mut self.context);
+    }
+}
+
+fn nameble_info<Value: ToHash + Serialize>(
+    ui: &mut egui::Ui,
+    data: &mut Data,
+    account_id: usize,
+    info: &Value,
+) {
+    let hash = iroh_blobs::Hash::from(info.hash().as_bytes());
+    if let Some(name) = data.accounts[account_id].known_as.get(&hash) {
+        ui.label(name).context_menu(|ui| {
+            if ui.small_button("Copy serialized").clicked() {
+                ui.ctx()
+                    .copy_text(base64_serialize(info).unwrap().to_string());
+            }
+        });
+        return;
+    }
+    ui.label(base64_serialize(info).unwrap().to_string())
+        .context_menu(|ui| {
+            ui.small_button("Set name");
+        });
+}
+
+trait ToHash {
+    fn hash(&self) -> blake3::Hash;
+}
+
+impl ToHash for iroh::PublicKey {
+    fn hash(&self) -> blake3::Hash {
+        blake3::hash(self.as_bytes())
+    }
+}
+
+impl ToHash for iroh_blobs::Hash {
+    fn hash(&self) -> blake3::Hash {
+        blake3::Hash::from_bytes(*self.as_bytes())
     }
 }
