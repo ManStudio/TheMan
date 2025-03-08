@@ -9,7 +9,7 @@ use cpal::{
     traits::{DeviceTrait, HostTrait},
     Stream,
 };
-use iroh::{protocol::Router, NodeId, SecretKey};
+use iroh::{endpoint::RemoteInfo, protocol::Router, NodeId, SecretKey};
 pub mod protocol;
 use iroh_blobs::Hash;
 use media_man::{CodecAudioOpus, TCodecAudio};
@@ -205,7 +205,7 @@ pub struct ActiveConversation {
 }
 
 enum ServiceRequest {
-    AddDefault(Hash),
+    AddDefault(Hash, Hash),
     StopDefault(Hash),
 }
 
@@ -445,13 +445,18 @@ impl TheManService {
 
     async fn handle_request(&mut self, request: ServiceRequest) {
         match request {
-            ServiceRequest::AddDefault(conversation_id) => {
+            ServiceRequest::AddDefault(conversation_id, last_message) => {
                 let mut conversation = self
                     .protocol
                     .get_conversation(conversation_id)
                     .await
                     .unwrap();
-                let last = conversation.messages().await.last().unwrap().ticket.clone();
+                let last = self
+                    .protocol
+                    .get_message(last_message)
+                    .await
+                    .expect("Cannot get message")
+                    .ticket;
                 conversation.set_last(last);
 
                 conversation
@@ -665,9 +670,20 @@ impl TheMan {
         self.node.endpoint().node_id()
     }
 
-    pub async fn add_conversation_default_stream(&self, conversation_id: Hash) {
+    pub fn secret(&self) -> SecretKey {
+        self.node.endpoint().secret_key().clone()
+    }
+
+    pub async fn add_conversation_default_stream(
+        &self,
+        conversation_id: Hash,
+        reply_to_message: Hash,
+    ) {
         self.sender
-            .send(ServiceRequest::AddDefault(conversation_id))
+            .send(ServiceRequest::AddDefault(
+                conversation_id,
+                reply_to_message,
+            ))
             .await
             .unwrap();
     }
@@ -677,6 +693,14 @@ impl TheMan {
             .send(ServiceRequest::StopDefault(conversation_id))
             .await
             .unwrap();
+    }
+
+    pub fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
+        self.node.endpoint().remote_info(node_id)
+    }
+
+    pub async fn connect(&self, node_id: NodeId) {
+        self.protocol.connect(node_id).await;
     }
 }
 
