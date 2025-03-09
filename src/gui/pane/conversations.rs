@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 use eframe::egui;
 use tracing::info;
 
-use crate::gui::ToHash;
+use crate::{gui::ToHash, Account};
 
 use super::{Pane, PaneConversation};
 
@@ -41,7 +41,7 @@ pub struct PaneConversations {
 }
 
 impl Pane for PaneConversations {
-    fn name(&self) -> String {
+    fn name(&self, _account: &Account) -> String {
         String::from("Conversations")
     }
 

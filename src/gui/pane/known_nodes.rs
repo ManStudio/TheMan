@@ -1,4 +1,4 @@
-use crate::gui::ToHash;
+use crate::{gui::ToHash, Account};
 
 use super::Pane;
 
@@ -20,7 +20,7 @@ pub struct PaneKnownNodes {
 }
 
 impl Pane for PaneKnownNodes {
-    fn name(&self) -> String {
+    fn name(&self, _account: &Account) -> String {
         String::from("Known Nodes")
     }
 

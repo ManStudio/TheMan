@@ -41,7 +41,6 @@ impl Entry {
 
 #[derive(Default)]
 pub struct PaneConversation {
-    name: Option<String>,
     conversation: Option<Hash>,
     message: String,
     selected: Option<Hash>,
@@ -54,17 +53,23 @@ pub struct PaneConversation {
 }
 
 impl Pane for PaneConversation {
-    fn name(&self) -> String {
+    fn name(&self, account: &crate::Account) -> String {
         let Some(conversation) = &self.conversation else {
             return String::from("C: NOT SET");
         };
 
         format!(
             "C: {}",
-            self.name
-                .clone()
-                .unwrap_or_else(|| base64_serialize(conversation).unwrap())
+            account
+                .known_as
+                .get(conversation)
+                .cloned()
+                .unwrap_or_else(|| base64_serialize(conversation).unwrap()),
         )
+    }
+
+    fn closable(&self) -> bool {
+        true
     }
 
     fn ui(
@@ -77,14 +82,6 @@ impl Pane for PaneConversation {
         let Some(conversation) = &self.conversation else {
             return;
         };
-
-        self.name = Some(
-            account
-                .known_as
-                .get(conversation)
-                .cloned()
-                .unwrap_or_else(|| base64_serialize(conversation).unwrap()),
-        );
 
         if let Some(mut receiver_tails) = self.o_receiver_tails.take() {
             if let Ok(tails) = receiver_tails.try_recv() {
@@ -148,17 +145,27 @@ impl Pane for PaneConversation {
 
         let size = ui.available_size_before_wrap();
         ui.horizontal(|ui| {
-            egui::Resize::default().max_size(size).show(ui, |ui| {
-                ui.add_sized(
-                    ui.available_size_before_wrap(),
-                    egui::TextEdit::multiline(&mut self.message).hint_text("Message"),
-                );
+            let send = egui::Resize::default().max_size(size).show(ui, |ui| {
+                if ui
+                    .add_sized(
+                        ui.available_size_before_wrap(),
+                        egui::TextEdit::multiline(&mut self.message).hint_text("Message"),
+                    )
+                    .has_focus()
+                    && ui
+                        .ctx()
+                        .input(|i| (!i.modifiers.shift) && i.key_pressed(egui::Key::Enter))
+                {
+                    return true;
+                }
+                false
             });
-            if ui.button("Send").clicked() {
+
+            if send {
                 let the_man = the_man.clone();
                 let hash_conversation = *conversation;
                 let last = self.selected;
-                let data = std::mem::take(&mut self.message);
+                let data = std::mem::take(&mut self.message).trim().to_string();
                 context.add_task(Box::pin(async move {
                     let conversation = the_man.get_conversation(hash_conversation).await.unwrap();
                     let last = if let Some(last) = last {

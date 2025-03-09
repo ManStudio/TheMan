@@ -2,6 +2,8 @@ use the_man::base64_serialize;
 
 use eframe::egui;
 
+use crate::Account;
+
 use super::Pane;
 
 #[derive(Default)]
@@ -10,7 +12,7 @@ pub struct PaneStatus {
 }
 
 impl Pane for PaneStatus {
-    fn name(&self) -> String {
+    fn name(&self, _account: &Account) -> String {
         String::from("Status")
     }
 

@@ -60,7 +60,7 @@ impl egui_tiles::Behavior<Box<dyn Pane>> for DashboardManager<'_> {
     }
 
     fn tab_title_for_pane(&mut self, pane: &Box<dyn Pane>) -> eframe::egui::WidgetText {
-        pane.name().into()
+        pane.name(self.account).into()
     }
 
     fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
@@ -85,6 +85,22 @@ impl egui_tiles::Behavior<Box<dyn Pane>> for DashboardManager<'_> {
                 egui::StrokeKind::Inside,
             );
         }
+    }
+
+    fn is_tab_closable(
+        &self,
+        tiles: &egui_tiles::Tiles<Box<dyn Pane>>,
+        tile_id: egui_tiles::TileId,
+    ) -> bool {
+        let Some(tile) = tiles.get(tile_id) else {
+            return false;
+        };
+
+        let egui_tiles::Tile::Pane(pane) = tile else {
+            return false;
+        };
+
+        pane.closable()
     }
 }
 

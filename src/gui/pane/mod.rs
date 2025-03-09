@@ -13,7 +13,10 @@ pub use known_nodes::PaneKnownNodes;
 pub use status::PaneStatus;
 
 pub trait Pane {
-    fn name(&self) -> String;
+    fn name(&self, account: &Account) -> String;
+    fn closable(&self) -> bool {
+        false
+    }
     fn ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -29,7 +32,7 @@ pub trait Pane {
 }
 
 impl Pane for String {
-    fn name(&self) -> String {
+    fn name(&self, _account: &Account) -> String {
         self.clone()
     }
 
