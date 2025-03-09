@@ -96,7 +96,7 @@ pub struct Dashboard {
 
     message_receiver: Option<
         oneshot::Receiver<(
-            the_man::protocol::Message,
+            Option<the_man::protocol::Message>,
             watch::Receiver<Option<the_man::protocol::Message>>,
         )>,
     >,
@@ -193,7 +193,7 @@ impl Dashboard {
 async fn task_message_receiver(
     mut message_subscriber: watch::Receiver<Option<the_man::protocol::Message>>,
     mut sender: oneshot::Sender<(
-        the_man::protocol::Message,
+        Option<the_man::protocol::Message>,
         watch::Receiver<Option<the_man::protocol::Message>>,
     )>,
 ) {
@@ -202,7 +202,7 @@ async fn task_message_receiver(
 
         },
         _ = message_subscriber.changed() => {
-            let msg = message_subscriber.borrow().clone().unwrap();
+            let msg = message_subscriber.borrow().clone();
             _ = sender.send((msg, message_subscriber));
         }
     }

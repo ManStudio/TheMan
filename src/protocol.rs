@@ -220,6 +220,7 @@ struct Conn {
 
 struct TheManService<S: Store> {
     messages_to_resolv: Vec<Ticket>,
+    conversations_to_resolv: Vec<Ticket>,
 
     connections: BTreeMap<NodeId, Conn>,
     message_sender: watch::Sender<Option<Message>>,
@@ -234,163 +235,163 @@ struct TheManService<S: Store> {
 
 impl<S: Store> TheManService<S> {
     pub async fn run(&mut self) {
+        let mut messages_to_add = std::mem::take(&mut self.messages_to_resolv);
+        let mut conversations_to_add = std::mem::take(&mut self.conversations_to_resolv);
         loop {
-            let mut messages_to_add = std::mem::take(&mut self.messages_to_resolv);
+            if messages_to_add.is_empty() && conversations_to_add.is_empty() {
+                let recv = (!self.connections.is_empty()).then(|| {
+                    futures_util::future::select_all(self.connections.iter_mut().map(
+                        |(node_id, conn)| {
+                            Box::pin(async move { (*node_id, conn.receiver.next().await) })
+                        },
+                    ))
+                });
 
-            let recv = (!self.connections.is_empty()).then(|| {
-                futures_util::future::select_all(self.connections.iter_mut().map(
-                    |(node_id, conn)| {
-                        Box::pin(async move { (*node_id, conn.receiver.next().await) })
-                    },
-                ))
-            });
+                tokio::select! {
+                    (recv, _, _) = async { if let Some(recv) = recv {recv.await} else {std::future::pending().await} } => {
+                        let Some(packets) = recv.1 else{
+                            info!("Disconnected from: {}", base64_serialize(&recv.0).unwrap());
+                            self.connections.remove(&recv.0);
+                            continue;
+                        };
 
-            tokio::select! {
-                (recv, _, _) = async { if let Some(recv) = recv {recv.await} else {std::future::pending().await} } => {
-                    let Some(packets) = recv.1 else{
-                        info!("Disconnected from: {}", base64_serialize(&recv.0).unwrap());
-                        self.connections.remove(&recv.0);
-                        continue;
-                    };
+                        for packet in packets{
+                        self.handle_packet(recv.0, packet, &mut messages_to_add).await;
 
-                    for packet in packets{
-                    self.handle_packet(recv.0, packet, &mut messages_to_add).await;
-
+                        }
                     }
-                }
-                request = self.receiver.recv() => {
-                    let Some(request) = request else{
-                        break;
-                    };
+                    request = self.receiver.recv() => {
+                        let Some(request) = request else{
+                            break;
+                        };
 
-                    self.handle_request(request, &mut messages_to_add).await;
+                        self.handle_request(request, &mut messages_to_add).await;
+                    }
                 }
             }
 
-            let mut conversations_to_add = Vec::<Ticket>::new();
-
-            while !(messages_to_add.is_empty() && conversations_to_add.is_empty()) {
-                for ticket in std::mem::take(&mut conversations_to_add) {
-                    if self.conversations.contains_key(&ticket.hash()) {
-                        continue;
-                    }
-
-                    let Some(bytes) = self.get_signed_data(&ticket).await else {
-                        error!(
-                            "Cannot get conversation: {}",
-                            base64_serialize(&ticket.hash()).unwrap()
-                        );
-                        continue;
-                    };
-
-                    self.blobs
-                        .store()
-                        .set_tag(
-                            iroh_blobs::Tag(
-                                format!("conversation-{}", base64_serialize(&ticket).unwrap())
-                                    .into(),
-                            ),
-                            Some(ticket.hash_and_format),
-                        )
-                        .await
-                        .unwrap();
-
-                    let Ok(raw) = bincode::deserialize::<RawConversation>(&bytes) else {
-                        error!(
-                            "Cannot parse conversation: {}",
-                            base64_serialize(&ticket.hash()).unwrap()
-                        );
-                        continue;
-                    };
-
-                    self.conversations.insert(
-                        ticket.hash(),
-                        Conversation {
-                            raw,
-                            ticket,
-                            tails: vec![],
-                        },
-                    );
+            for ticket in std::mem::take(&mut conversations_to_add) {
+                if self.conversations.contains_key(&ticket.hash()) {
+                    continue;
                 }
 
-                let mut skip = false;
-                for ticket in std::mem::take(&mut messages_to_add) {
-                    if self.messages.contains_key(&ticket.hash()) {
-                        continue;
-                    }
+                let Some(bytes) = self.get_signed_data(&ticket).await else {
+                    error!(
+                        "Cannot get conversation: {}",
+                        base64_serialize(&ticket.hash()).unwrap()
+                    );
+                    continue;
+                };
 
-                    if skip {
-                        messages_to_add.push(ticket);
-                        continue;
-                    }
+                self.blobs
+                    .store()
+                    .set_tag(
+                        iroh_blobs::Tag(
+                            format!("conversation/{}", base64_serialize(&ticket).unwrap()).into(),
+                        ),
+                        Some(ticket.hash_and_format),
+                    )
+                    .await
+                    .unwrap();
 
-                    let Some(bytes) = self.get_signed_data(&ticket).await else {
-                        error!(
-                            "Cannot get message: {}",
-                            base64_serialize(&ticket.hash()).unwrap()
-                        );
-                        continue;
-                    };
+                let Ok(raw) = bincode::deserialize::<RawConversation>(&bytes) else {
+                    error!(
+                        "Cannot parse conversation: {}",
+                        base64_serialize(&ticket.hash()).unwrap()
+                    );
+                    continue;
+                };
 
-                    self.blobs
-                        .store()
-                        .set_tag(
-                            iroh_blobs::Tag(
-                                format!("message-{}", base64_serialize(&ticket).unwrap()).into(),
-                            ),
-                            Some(ticket.hash_and_format),
-                        )
-                        .await
-                        .unwrap();
+                self.conversations.insert(
+                    ticket.hash(),
+                    Conversation {
+                        raw,
+                        ticket,
+                        tails: vec![],
+                    },
+                );
 
-                    let Ok(raw) = bincode::deserialize::<RawMessage>(&bytes) else {
-                        error!(
-                            "Cannot parse message: {}",
-                            base64_serialize(&ticket.hash()).unwrap()
-                        );
-                        continue;
-                    };
+                info!("Conversation added");
+                _ = self.message_sender.send(None);
+            }
 
-                    let Some(conversation) = self.conversations.get_mut(&raw.conversation.hash())
-                    else {
-                        conversations_to_add.push(raw.conversation.clone());
-                        messages_to_add.push(ticket);
-                        skip = true;
-                        continue;
-                    };
+            let mut skip = false;
+            for ticket in std::mem::take(&mut messages_to_add) {
+                if self.messages.contains_key(&ticket.hash()) {
+                    continue;
+                }
 
-                    if !conversation.raw.nodes.contains(&ticket.owner_id) {
-                        debug!("Some body send a message in a conversation that is not part of, peer_id: {}, conversation: {}, message_ticket: {}",
+                if skip {
+                    messages_to_add.push(ticket);
+                    continue;
+                }
+
+                let Some(bytes) = self.get_signed_data(&ticket).await else {
+                    error!(
+                        "Cannot get message: {}",
+                        base64_serialize(&ticket.hash()).unwrap()
+                    );
+                    continue;
+                };
+
+                self.blobs
+                    .store()
+                    .set_tag(
+                        iroh_blobs::Tag(
+                            format!("message/{}", base64_serialize(&ticket).unwrap()).into(),
+                        ),
+                        Some(ticket.hash_and_format),
+                    )
+                    .await
+                    .unwrap();
+
+                let Ok(raw) = bincode::deserialize::<RawMessage>(&bytes) else {
+                    error!(
+                        "Cannot parse message: {}",
+                        base64_serialize(&ticket.hash()).unwrap()
+                    );
+                    continue;
+                };
+
+                let Some(conversation) = self.conversations.get_mut(&raw.conversation.hash())
+                else {
+                    conversations_to_add.push(raw.conversation.clone());
+                    messages_to_add.push(ticket);
+                    skip = true;
+                    continue;
+                };
+
+                if !conversation.raw.nodes.contains(&ticket.owner_id) {
+                    debug!("Some body send a message in a conversation that is not part of, peer_id: {}, conversation: {}, message_ticket: {}",
                                 base64_serialize(&ticket.owner_id).unwrap(),
                                 base64_serialize(&raw.conversation.hash()).unwrap(),
                                 base64_serialize(&ticket).unwrap()
                             );
-                        _ = self.blobs.client().delete_blob(ticket.hash()).await;
+                    _ = self.blobs.client().delete_blob(ticket.hash()).await;
+                    continue;
+                }
+
+                if let Some(last) = raw.last.clone() {
+                    if !self.messages.contains_key(&last.hash()) {
+                        messages_to_add.push(last);
+                        messages_to_add.push(ticket);
+                        skip = true;
                         continue;
                     }
-
-                    if let Some(last) = raw.last.clone() {
-                        if !self.messages.contains_key(&last.hash()) {
-                            messages_to_add.push(last);
-                            messages_to_add.push(ticket);
-                            skip = true;
-                            continue;
-                        }
-                    }
-
-                    conversation
-                        .add_message(ticket.hash(), raw.last.as_ref().map(|ticket| ticket.hash()))
-                        .await;
-
-                    info!(
-                        "Added message: {}",
-                        base64_serialize(&ticket.hash()).unwrap()
-                    );
-
-                    let message = Message { raw, ticket };
-                    self.messages.insert(message.ticket.hash(), message.clone());
-                    _ = self.message_sender.send(Some(message));
                 }
+
+                conversation
+                    .add_message(ticket.hash(), raw.last.as_ref().map(|ticket| ticket.hash()))
+                    .await;
+
+                info!(
+                    "Added message: {}",
+                    base64_serialize(&ticket.hash()).unwrap()
+                );
+
+                let message = Message { raw, ticket };
+                self.messages.insert(message.ticket.hash(), message.clone());
+                _ = self.message_sender.send(Some(message));
             }
         }
     }
@@ -580,7 +581,7 @@ impl<S: Store> TheManService<S> {
                     .store()
                     .set_tag(
                         iroh_blobs::Tag(
-                            format!("conversation-{}", base64_serialize(&ticket).unwrap()).into(),
+                            format!("conversation/{}", base64_serialize(&ticket).unwrap()).into(),
                         ),
                         Some(ticket.hash_and_format),
                     )
@@ -675,7 +676,7 @@ impl<S: Store> TheManService<S> {
                     .store()
                     .set_tag(
                         iroh_blobs::Tag(
-                            format!("message-{}", base64_serialize(&ticket).unwrap()).into(),
+                            format!("message/{}", base64_serialize(&ticket).unwrap()).into(),
                         ),
                         Some(ticket.hash_and_format),
                     )
@@ -912,18 +913,29 @@ pub struct TheMan<S: Store> {
 }
 
 impl<S: Store> TheMan<S> {
-    pub async fn spawn(blobs: Blobs<S>, endpoint: Endpoint) -> Self {
+    pub async fn spawn(
+        blobs: Blobs<S>,
+        endpoint: Endpoint,
+        message_sender: watch::Sender<Option<Message>>,
+    ) -> Self {
         let mut messages_to_resolv = Vec::new();
+        let mut conversations_to_resolv = Vec::new();
 
         for tag in blobs.store().tags().await.unwrap() {
             let Ok(tag) = tag else {
                 continue;
             };
 
-            if tag.0 .0.starts_with(b"message-") {
-                let ticket_data = tag.0 .0.strip_prefix(b"message-").unwrap();
+            if tag.0 .0.starts_with(b"message/") {
+                let ticket_data = tag.0 .0.strip_prefix(b"message/").unwrap();
                 let ticket = base64_deserialize::<Ticket>(ticket_data).expect("Cannot deserialize");
                 messages_to_resolv.push(ticket);
+            }
+
+            if tag.0 .0.starts_with(b"conversation/") {
+                let ticket_data = tag.0 .0.strip_prefix(b"conversation/").unwrap();
+                let ticket = base64_deserialize::<Ticket>(ticket_data).expect("Cannot deserialize");
+                conversations_to_resolv.push(ticket);
             }
         }
 
@@ -935,12 +947,13 @@ impl<S: Store> TheMan<S> {
             tokio::spawn(async move {
                 TheManService {
                     messages_to_resolv,
+                    conversations_to_resolv,
                     receiver,
                     downloader: blobs.downloader().clone(),
                     messages: BTreeMap::default(),
                     conversations: BTreeMap::default(),
                     endpoint,
-                    message_sender: watch::Sender::new(None),
+                    message_sender,
                     connections: BTreeMap::new(),
                     blobs,
                 }

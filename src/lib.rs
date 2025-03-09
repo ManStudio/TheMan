@@ -595,11 +595,12 @@ impl TheMan {
             .expect("Cannot create store")
             .build(&endpoint);
 
-        let protocol = protocol::TheMan::spawn(blobs.clone(), endpoint.clone()).await;
+        let sender = tokio::sync::watch::Sender::<Option<Message>>::new(None);
+        let message_receiver = sender.subscribe();
+
+        let protocol = protocol::TheMan::spawn(blobs.clone(), endpoint.clone(), sender).await;
 
         println!("NodeId: {}", base64_serialize(&endpoint.node_id()).unwrap());
-
-        let message_receiver = protocol.subscribe_messages().await;
 
         let (sender, receiver) = tokio::sync::mpsc::channel::<ServiceRequest>(8);
         let task = {
