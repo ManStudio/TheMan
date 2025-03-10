@@ -9,7 +9,7 @@ use chrono::Utc;
 use ed25519::Signature;
 use futures_util::StreamExt;
 use iroh::{
-    endpoint::{self, Connection, RecvStream, SendStream},
+    endpoint::{Connection, RecvStream, SendStream},
     protocol::ProtocolHandler,
     Endpoint, NodeAddr, NodeId, SecretKey,
 };
@@ -294,13 +294,18 @@ impl<S: Store> TheManService<S> {
                     .await
                     .unwrap();
 
-                let Ok(raw) = bincode::deserialize::<RawConversation>(&bytes) else {
+                let Ok(raw) = bincode::serde::decode_from_slice::<RawConversation, _>(
+                    &bytes,
+                    bincode::config::legacy(),
+                ) else {
                     error!(
                         "Cannot parse conversation: {}",
                         base64_serialize(&ticket.hash()).unwrap()
                     );
                     continue;
                 };
+
+                let raw = raw.0;
 
                 self.conversations.insert(
                     ticket.hash(),
@@ -345,13 +350,18 @@ impl<S: Store> TheManService<S> {
                     .await
                     .unwrap();
 
-                let Ok(raw) = bincode::deserialize::<RawMessage>(&bytes) else {
+                let Ok(raw) = bincode::serde::decode_from_slice::<RawMessage, _>(
+                    &bytes,
+                    bincode::config::legacy(),
+                ) else {
                     error!(
                         "Cannot parse message: {}",
                         base64_serialize(&ticket.hash()).unwrap()
                     );
                     continue;
                 };
+
+                let raw = raw.0;
 
                 let Some(conversation) = self.conversations.get_mut(&raw.conversation.hash())
                 else {
@@ -462,13 +472,17 @@ impl<S: Store> TheManService<S> {
             }
         };
 
-        let Ok(signed) = bincode::deserialize::<Signed>(&bytes) else {
+        let Ok(signed) =
+            bincode::serde::decode_from_slice::<Signed, _>(&bytes, bincode::config::legacy())
+        else {
             error!(
                 "Cannot parse signed ticket data: {}",
                 base64_serialize(&ticket).unwrap()
             );
             return None;
         };
+
+        let signed = signed.0;
 
         let Ok(bytes) = signed.get(&ticket.owner_id) else {
             error!(
@@ -548,7 +562,9 @@ impl<S: Store> TheManService<S> {
                 );
             }
             ServiceRequest::Create(raw_conversation, sender) => {
-                let bytes = bincode::serialize(&raw_conversation).unwrap();
+                let bytes =
+                    bincode::serde::encode_to_vec(&raw_conversation, bincode::config::legacy())
+                        .unwrap();
 
                 let Ok(node_addr) = self.endpoint.node_addr().await else {
                     error!("Cannot get the node_addr");
@@ -558,8 +574,11 @@ impl<S: Store> TheManService<S> {
                     return;
                 };
 
-                let bytes =
-                    bincode::serialize(&Signed::new(self.endpoint.secret_key(), bytes)).unwrap();
+                let bytes = bincode::serde::encode_to_vec(
+                    Signed::new(self.endpoint.secret_key(), bytes),
+                    bincode::config::legacy(),
+                )
+                .unwrap();
 
                 let Ok(res) = self.blobs.client().add_bytes(bytes).await else {
                     error!("Cannot add bytes");
@@ -645,7 +664,9 @@ impl<S: Store> TheManService<S> {
                     return;
                 };
 
-                let Ok(bytes) = bincode::serialize(&raw_message) else {
+                let Ok(bytes) =
+                    bincode::serde::encode_to_vec(&raw_message, bincode::config::legacy())
+                else {
                     error!("Cannot serialize message");
                     if sender.send(None).is_err() {
                         error!("Cannot send");
@@ -653,11 +674,19 @@ impl<S: Store> TheManService<S> {
                     return;
                 };
 
-                let bytes =
-                    bincode::serialize(&Signed::new(self.endpoint.secret_key(), bytes)).unwrap();
+                let bytes = bincode::serde::encode_to_vec(
+                    Signed::new(self.endpoint.secret_key(), bytes),
+                    bincode::config::legacy(),
+                )
+                .unwrap();
 
-                let Ok(res) = self.blobs.client().add_bytes(bytes).await else {
-                    error!("Cannot add message as blob");
+                let Ok(res) = self
+                    .blobs
+                    .client()
+                    .add_bytes(bytes)
+                    .await
+                    .map_err(|err| error!("{err}: Cannot add message as blob"))
+                else {
                     if sender.send(None).is_err() {
                         error!("Cannot send");
                     }
@@ -880,7 +909,11 @@ impl<S: Store> ConversationHandle<S> {
                 .await;
             if let Ok(Some(msg)) = receiver.await {
                 self.last = Some(msg.ticket);
+            } else {
+                error!("Cannot get the sent message.");
             }
+        } else {
+            error!("Cannot send a message");
         }
     }
 }
@@ -1122,7 +1155,7 @@ impl<S: Store> ProtocolHandler for TheMan<S> {
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>> {
         let inner = self.inner.clone();
         Box::pin(async move {
-            info!("Connecting..");
+            info!("Incomming connection..");
             let connection = connecting
                 .await
                 .inspect_err(|err| error!("Connect Fail: {err}"))?;
@@ -1144,7 +1177,7 @@ impl<S: Store> ProtocolHandler for TheMan<S> {
         Box::pin(async move {
             inner.sender.write().await.take();
             if let Some(task) = task.lock().await.take() {
-                task.await;
+                _ = task.await;
             }
         })
     }

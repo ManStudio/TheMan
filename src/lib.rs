@@ -709,14 +709,15 @@ impl TheMan {
     }
 }
 
-pub fn base64_serialize<T: Serialize>(value: &T) -> bincode::Result<String> {
-    let value = bincode::serialize(value)?;
+pub fn base64_serialize<T: Serialize>(value: &T) -> Result<String, Base64DecodeError> {
+    let value = bincode::serde::encode_to_vec(value, bincode::config::legacy())?;
     Ok(BASE64_URL_SAFE_NO_PAD.encode(value))
 }
 
 #[derive(Debug)]
 pub enum Base64DecodeError {
-    Bincode(bincode::Error),
+    BincodeDecode(bincode::error::DecodeError),
+    BincodeEncode(bincode::error::EncodeError),
     Base64(base64::DecodeError),
 }
 
@@ -726,9 +727,15 @@ impl From<base64::DecodeError> for Base64DecodeError {
     }
 }
 
-impl From<bincode::Error> for Base64DecodeError {
-    fn from(value: bincode::Error) -> Self {
-        Self::Bincode(value)
+impl From<bincode::error::DecodeError> for Base64DecodeError {
+    fn from(value: bincode::error::DecodeError) -> Self {
+        Self::BincodeDecode(value)
+    }
+}
+
+impl From<bincode::error::EncodeError> for Base64DecodeError {
+    fn from(value: bincode::error::EncodeError) -> Self {
+        Self::BincodeEncode(value)
     }
 }
 
@@ -736,5 +743,5 @@ pub fn base64_deserialize<T: DeserializeOwned>(
     value: impl AsRef<[u8]>,
 ) -> Result<T, Base64DecodeError> {
     let bytes = BASE64_URL_SAFE_NO_PAD.decode(value)?;
-    Ok(bincode::deserialize::<T>(&bytes)?)
+    Ok(bincode::serde::decode_from_slice(&bytes, bincode::config::legacy())?.0)
 }

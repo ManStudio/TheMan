@@ -43,11 +43,6 @@ impl Data {
     }
 }
 
-// mod backend_eframe;
-// use backend_eframe::App;
-
-use eframe::egui;
-
 mod gui;
 
 fn main() {
@@ -56,6 +51,8 @@ fn main() {
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive("the_man=trace".parse().unwrap()),
         )
+        .with_file(true)
+        .with_line_number(true)
         .init();
 
     let data = Data::load();

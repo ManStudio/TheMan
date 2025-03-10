@@ -143,46 +143,108 @@ impl Pane for PaneConversation {
             }
         }
 
+        egui::Frame::group(ui.style())
+            .inner_margin(4)
+            .outer_margin(4)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let scroll_width = (ui.available_size_before_wrap().x / 2.) - 6.0;
+                    ui.vertical(|ui| {
+                        ui.heading("IN Streams");
+
+                        egui::ScrollArea::vertical()
+                            .max_width(scroll_width)
+                            .id_salt("IN Streams")
+                            .auto_shrink(false)
+                            .scroll_bar_visibility(
+                                egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                            )
+                            .show(ui, |ui| {
+                                ui.label("Example IN");
+                            });
+                    });
+                    ui.separator();
+                    ui.vertical(|ui| {
+                        ui.heading("OUT Streams");
+
+                        if ui
+                            .add_enabled(
+                                self.selected.is_some(),
+                                egui::Button::new("Add Default Audio Stream"),
+                            )
+                            .on_disabled_hover_text(
+                                "You need to select a message to add begin a stream",
+                            )
+                            .clicked()
+                        {
+                            let the_man = the_man.clone();
+                            let conversation = *conversation;
+                            let msg_hash = self.selected.unwrap();
+                            context.add_task(Box::pin(async move {
+                                the_man
+                                    .add_conversation_default_stream(conversation, msg_hash)
+                                    .await;
+                            }));
+                        }
+
+                        egui::ScrollArea::vertical()
+                            .max_width(scroll_width)
+                            .id_salt("OUT Streams")
+                            .auto_shrink(false)
+                            .scroll_bar_visibility(
+                                egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                            )
+                            .show(ui, |ui| {
+                                ui.label("Example OUT");
+                            });
+                    });
+                });
+            });
+        ui.separator();
+
         let size = ui.available_size_before_wrap();
         ui.horizontal(|ui| {
-            let send = egui::Resize::default().max_size(size).show(ui, |ui| {
-                if ui
-                    .add_sized(
-                        ui.available_size_before_wrap(),
-                        egui::TextEdit::multiline(&mut self.message).hint_text("Message"),
-                    )
-                    .has_focus()
-                    && ui
-                        .ctx()
-                        .input(|i| (!i.modifiers.shift) && i.key_pressed(egui::Key::Enter))
-                {
-                    return true;
-                }
-                false
-            });
+            ui.horizontal(|ui| {
+                let send = egui::Resize::default().max_size(size).show(ui, |ui| {
+                    if ui
+                        .add_sized(
+                            ui.available_size_before_wrap(),
+                            egui::TextEdit::multiline(&mut self.message).hint_text("Message"),
+                        )
+                        .has_focus()
+                        && ui
+                            .ctx()
+                            .input(|i| (!i.modifiers.shift) && i.key_pressed(egui::Key::Enter))
+                    {
+                        return true;
+                    }
+                    false
+                });
 
-            if send {
-                let the_man = the_man.clone();
-                let hash_conversation = *conversation;
-                let last = self.selected;
-                let data = std::mem::take(&mut self.message).trim().to_string();
-                context.add_task(Box::pin(async move {
-                    let conversation = the_man.get_conversation(hash_conversation).await.unwrap();
-                    let last = if let Some(last) = last {
-                        Some(the_man.get_message(last).await.unwrap().ticket)
-                    } else {
-                        None
-                    };
-                    the_man
-                        .send_message(RawMessage {
-                            last,
-                            time: chrono::Utc::now(),
-                            conversation: conversation.ticket().await,
-                            data,
-                        })
-                        .await;
-                }));
-            }
+                if send {
+                    let the_man = the_man.clone();
+                    let hash_conversation = *conversation;
+                    let last = self.selected;
+                    let data = std::mem::take(&mut self.message).trim().to_string();
+                    context.add_task(Box::pin(async move {
+                        let conversation =
+                            the_man.get_conversation(hash_conversation).await.unwrap();
+                        let last = if let Some(last) = last {
+                            Some(the_man.get_message(last).await.unwrap().ticket)
+                        } else {
+                            None
+                        };
+                        the_man
+                            .send_message(RawMessage {
+                                last,
+                                time: chrono::Utc::now(),
+                                conversation: conversation.ticket().await,
+                                data,
+                            })
+                            .await;
+                    }));
+                }
+            });
         });
 
         egui::Frame::group(ui.style())

@@ -263,7 +263,7 @@ impl App {
 
                         _ = tasks.remove(index);
 
-                        if index == 0{
+                        if tasks.is_empty(){
                             _ = sender.send(Event::Finished).await;
                         }
 
