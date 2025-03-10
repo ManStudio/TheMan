@@ -700,6 +700,10 @@ impl TheMan {
         self.node.endpoint().remote_info(node_id)
     }
 
+    pub fn remote_infos(&self) -> Vec<RemoteInfo> {
+        self.node.endpoint().remote_info_iter().collect()
+    }
+
     pub async fn connect(&self, node_id: NodeId) {
         self.protocol.connect(node_id).await;
     }

@@ -15,7 +15,7 @@ pub enum Event {
 }
 
 mod pane;
-use pane::{Pane, PaneConversations, PaneKnownNodes, PaneStatus};
+use pane::{Pane, PaneActive, PaneConversations, PaneKnownNodes, PaneStatus};
 
 pub struct Context {
     receiver: mpsc::Receiver<Event>,
@@ -124,7 +124,7 @@ impl Dashboard {
 
         let conversations = tiles.insert_pane(Box::new(PaneConversations::default()));
         let known = tiles.insert_pane(Box::new(PaneKnownNodes::default()));
-        let active = tiles.insert_pane(Box::new(String::from("Active")));
+        let active = tiles.insert_pane(Box::new(PaneActive::default()));
         let status = tiles.insert_pane(Box::new(PaneStatus::default()));
 
         let welcome = tiles.insert_pane(Box::new(String::from("Welcome")));

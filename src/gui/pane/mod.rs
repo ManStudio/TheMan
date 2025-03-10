@@ -2,11 +2,13 @@ use eframe::egui;
 
 use crate::Account;
 
+mod active;
 mod conversation;
 mod conversations;
 mod known_nodes;
 mod status;
 
+pub use active::PaneActive;
 pub use conversation::PaneConversation;
 pub use conversations::PaneConversations;
 pub use known_nodes::PaneKnownNodes;
