@@ -41,12 +41,15 @@ impl Entry {
 
 #[derive(Default)]
 pub struct PaneConversation {
-    conversation: Option<Hash>,
+    conversation_id: Option<Hash>,
     message: String,
     selected: Option<Hash>,
     conversation_refreshes: usize,
 
     tails: Vec<Vec<Entry>>,
+
+    conversation: Option<the_man::protocol::Conversation>,
+    receive_conversation: Option<oneshot::Receiver<the_man::protocol::Conversation>>,
 
     o_receiver_tails: Option<oneshot::Receiver<Vec<Arc<TreeEntry>>>>,
     receivers_messages: Vec<oneshot::Receiver<Message>>,
@@ -54,7 +57,7 @@ pub struct PaneConversation {
 
 impl Pane for PaneConversation {
     fn name(&self, account: &crate::Account) -> String {
-        let Some(conversation) = &self.conversation else {
+        let Some(conversation) = &self.conversation_id else {
             return String::from("C: NOT SET");
         };
 
@@ -79,7 +82,32 @@ impl Pane for PaneConversation {
         the_man: &mut the_man::TheMan,
         account: &mut crate::Account,
     ) {
+        let Some(conversation_id) = &self.conversation_id else {
+            return;
+        };
+
+        if let Some(mut receiver_conversation) = self.receive_conversation.take() {
+            if let Ok(conversation) = receiver_conversation.try_recv() {
+                self.conversation = Some(conversation);
+            } else {
+                self.receive_conversation = Some(receiver_conversation);
+                return;
+            }
+        }
+
         let Some(conversation) = &self.conversation else {
+            let conversation_id = *conversation_id;
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            let the_man = the_man.clone();
+            context.add_task(Box::pin(async move {
+                let handle = the_man
+                    .get_conversation(conversation_id)
+                    .await
+                    .expect("Cannot get conversation");
+                _ = sender.send(handle.get().await);
+            }));
+            self.receive_conversation = Some(receiver);
+
             return;
         };
 
@@ -110,7 +138,7 @@ impl Pane for PaneConversation {
             let (sender, receiver) = oneshot::channel();
 
             let the_man = the_man.clone();
-            let hash = *conversation;
+            let hash = *conversation_id;
             context.add_task(Box::pin(async move {
                 let tails = the_man
                     .get_conversation(hash)
@@ -150,52 +178,75 @@ impl Pane for PaneConversation {
                 ui.horizontal(|ui| {
                     let scroll_width = (ui.available_size_before_wrap().x / 2.) - 6.0;
                     ui.vertical(|ui| {
-                        ui.heading("IN Streams");
+                        ui.heading("OUT");
 
-                        egui::ScrollArea::vertical()
+                        egui::ScrollArea::horizontal()
                             .max_width(scroll_width)
-                            .id_salt("IN Streams")
+                            .id_salt("OUT")
                             .auto_shrink(false)
                             .scroll_bar_visibility(
                                 egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
                             )
                             .show(ui, |ui| {
-                                ui.label("Example IN");
+                                ui.horizontal(|ui| {
+                                    for node_id in conversation.raw.nodes.iter() {
+                                        ui.vertical(|ui| {
+                                            ui.heading(account.known_as.get(&ToHash::hash(node_id)).cloned().unwrap_or_else(||base64_serialize(node_id).unwrap()));
+                                            egui::ScrollArea::vertical()
+                                            .max_width(scroll_width)
+                                            .id_salt(format!("OUT {node_id}"))
+                                            .auto_shrink([true, false])
+                                            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                                            .show(ui, |ui| {
+                                                tokio::runtime::Handle::current().block_on(async {
+                                                    for idx in the_man.conversation_outputs(*conversation_id, *node_id).await{
+                                                        ui.label(format!("{idx}"));
+                                                    }
+                                                });
+
+                                            });
+                                        });
+                                        ui.separator();
+                                    }
+                                })
                             });
                     });
                     ui.separator();
                     ui.vertical(|ui| {
-                        ui.heading("OUT Streams");
+                        ui.heading("IN");
 
                         if ui
-                            .add_enabled(
-                                self.selected.is_some(),
-                                egui::Button::new("Add Default Audio Stream"),
-                            )
+                            .add_enabled(self.selected.is_some(), egui::Button::new("Create Input"))
                             .on_disabled_hover_text(
-                                "You need to select a message to add begin a stream",
+                                "You need to select the message where that input will reply.",
                             )
                             .clicked()
                         {
                             let the_man = the_man.clone();
-                            let conversation = *conversation;
+                            let conversation = *conversation_id;
                             let msg_hash = self.selected.unwrap();
                             context.add_task(Box::pin(async move {
                                 the_man
-                                    .add_conversation_output_default_stream(conversation, msg_hash)
+                                    .conversation_create_input(conversation, msg_hash)
                                     .await;
                             }));
                         }
 
                         egui::ScrollArea::vertical()
                             .max_width(scroll_width)
-                            .id_salt("OUT Streams")
+                            .id_salt("IN")
                             .auto_shrink(false)
                             .scroll_bar_visibility(
                                 egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
                             )
                             .show(ui, |ui| {
-                                ui.label("Example OUT");
+                                tokio::runtime::Handle::current().block_on(async {
+                                    for idx in the_man.conversation_inputs(*conversation_id ).await{
+                                        if ui.button(format!("{idx}")).clicked(){
+                                            the_man.conversation_stop_input(*conversation_id, idx).await;
+                                        }
+                                    }
+                                });
                             });
                     });
                 });
@@ -223,7 +274,7 @@ impl Pane for PaneConversation {
 
                 if send {
                     let the_man = the_man.clone();
-                    let hash_conversation = *conversation;
+                    let hash_conversation = *conversation_id;
                     let last = self.selected;
                     let data = std::mem::take(&mut self.message).trim().to_string();
                     context.add_task(Box::pin(async move {
@@ -400,14 +451,14 @@ impl Pane for PaneConversation {
 
     fn set_data(&mut self, data: String) {
         if let Ok(conversation) = base64_deserialize::<Hash>(data) {
-            self.conversation = Some(conversation);
+            self.conversation_id = Some(conversation);
             return;
         }
         error!("Cannot parse data");
     }
 
     fn get_data(&self) -> String {
-        let Some(conversation) = &self.conversation else {
+        let Some(conversation) = &self.conversation_id else {
             return String::default();
         };
 

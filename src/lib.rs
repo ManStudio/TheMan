@@ -1,23 +1,26 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, VecDeque},
     future::Future,
     pin::Pin,
     str::FromStr,
     sync::Arc,
 };
 
-use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine as _};
-use cpal::{
-    traits::{DeviceTrait, HostTrait},
-    Stream,
-};
-use iroh::{endpoint::RemoteInfo, protocol::Router, NodeId, SecretKey};
+use base64::{Engine as _, prelude::BASE64_URL_SAFE_NO_PAD};
+use iroh::{NodeId, SecretKey, endpoint::RemoteInfo, protocol::Router};
 pub mod protocol;
 use iroh_blobs::Hash;
+type Store = iroh_blobs::store::fs::Store;
 use media_man::{CodecAudioOpus, TCodecAudio};
 use protocol::{ConversationHandle, Message, RawConversation, TheMan as ProtocolTheMan, Ticket};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
+use tokio::sync::mpsc::{
+    UnboundedReceiver as Receiver, UnboundedSender as Sender, unbounded_channel as channel,
+};
+use tokio::sync::oneshot::{Receiver as OReceiver, Sender as OSender, channel as ochannel};
 use tracing::{error, info, warn};
+
+use cpal::traits::{DeviceTrait as _, HostTrait as _};
 
 mod command;
 use command::{Command, CommandAuto, CommandData};
@@ -25,13 +28,13 @@ use command::{Command, CommandAuto, CommandData};
 pub struct StreamIN {
     name: String,
     task: Pin<Box<dyn Future<Output = ()> + Send>>,
-    sender: tokio::sync::mpsc::Sender<f32>,
+    sender: Sender<f32>,
 }
 
 pub struct StreamOUT {
     name: String,
     task: Pin<Box<dyn Future<Output = ()> + Send>>,
-    receiver: tokio::sync::mpsc::Receiver<f32>,
+    receiver: Receiver<f32>,
 }
 
 pub struct UnsafeSendSyncWrapper<T>(pub T);
@@ -41,14 +44,30 @@ unsafe impl<T> Sync for UnsafeSendSyncWrapper<T> {}
 
 #[derive(Default)]
 pub struct ActiveConversation {
-    input_streams: BTreeMap<u32, usize>,
-    output_streams:
-        BTreeMap<NodeId, BTreeMap<u32, (tokio::sync::mpsc::Sender<media_man::Packet>, usize)>>,
+    inputs: BTreeMap<u32, usize>,
+    next_idx: u32,
+
+    outputs: BTreeMap<NodeId, BTreeMap<u32, (tokio::sync::mpsc::Sender<media_man::Packet>, usize)>>,
 }
 
 enum ServiceRequest {
-    AddDefault(Hash, Hash),
-    StopDefault(Hash),
+    Inputs(Hash, OSender<Vec<u32>>),
+    Outputs(Hash, NodeId, OSender<Vec<u32>>),
+
+    AddInput(Hash, Hash, OSender<u32>),
+    StopInput(Hash, u32),
+
+    GetInputStream(Hash, u32, OSender<usize>),
+    GetOutputStream(Hash, NodeId, u32, OSender<usize>),
+
+    InputStreams(OSender<Vec<usize>>),
+    OutputStreams(OSender<Vec<usize>>),
+
+    StreamName(usize, OSender<Option<String>>),
+
+    OutputStreamConnections(usize, OSender<Vec<usize>>),
+    OutputStreamConnect(usize, usize),
+    OutputStreamDisconnect(usize, usize),
 }
 
 struct TheManService {
@@ -108,7 +127,7 @@ impl TheManService {
 
     pub fn add_default_input(&mut self) {
         if let Some(default_device) = self.host.default_input_device() {
-            let (sender, receiver) = tokio::sync::mpsc::channel::<f32>(960);
+            let (sender, receiver) = channel::<f32>();
 
             let Ok(stream) = default_device.build_input_stream(
                 &cpal::StreamConfig {
@@ -118,7 +137,7 @@ impl TheManService {
                 },
                 move |samples: &[f32], _info| {
                     for sample in samples {
-                        if let Err(err) = sender.try_send(*sample) {
+                        if let Err(err) = sender.send(*sample) {
                             error!("Default Audio Input cannot send: {err}");
                         }
                     }
@@ -154,7 +173,7 @@ impl TheManService {
 
     pub fn add_default_output(&mut self) {
         if let Some(default_device) = self.host.default_output_device() {
-            let (sender, mut receiver) = tokio::sync::mpsc::channel::<f32>(960);
+            let (sender, mut receiver) = channel::<f32>();
 
             let mut buffer = VecDeque::new();
             let Ok(stream) = default_device.build_output_stream(
@@ -230,7 +249,7 @@ impl TheManService {
 
             let mut receivers = Vec::new();
 
-            for (id, (out_stream, inputs)) in unsafe {
+            for (_, (out_stream, inputs)) in unsafe {
                 std::mem::transmute::<
                     std::collections::btree_map::IterMut<'_, usize, (StreamOUT, Vec<usize>)>,
                     std::collections::btree_map::IterMut<'static, usize, (StreamOUT, Vec<usize>)>,
@@ -242,19 +261,19 @@ impl TheManService {
                 }))
             }
 
-            for (id, in_stream) in self.in_streams.iter_mut() {
+            for (_, in_stream) in self.in_streams.iter_mut() {
                 tasks.push(&mut in_stream.task);
             }
 
             tokio::select! {
-                _ = futures_util::future::select_all(tasks) => {
+                _ = async { if tasks.is_empty() {std::future::pending().await} else {futures_util::future::select_all(tasks).await}}  => {
                     panic!("A task that should never finish has finished");
                 }
-                ((Some(sample), inputs), _, _) = futures_util::future::select_all(receivers) => {
+                ((Some(sample), inputs), _, _) = async {if receivers.is_empty() {std::future::pending().await} else{ futures_util::future::select_all(receivers).await}} => {
                     for input in inputs{
-                        for stream in self.in_streams.get_mut(input){
-                            if let Err(err) = stream.sender.try_send(sample){
-                                error!("Cannot send sample to: {}", stream.name);
+                        if let Some(stream) = self.in_streams.get(input){
+                            if let Err(err) = stream.sender.send(sample){
+                                error!("Cannot send sample to: {} {err}", stream.name);
                             }
                         }
                     }
@@ -335,11 +354,15 @@ impl TheManService {
                                     .unwrap();
                                 let mut decoder =
                                     audio_codec.create_decoder(decoder_settings).unwrap();
-                                let (sender, receiver) = tokio::sync::mpsc::channel::<f32>(960);
+                                let (sender, receiver) = channel::<f32>();
 
                                 let idx = *idx;
                                 StreamOUT {
-                                    name: format!("opus decode"),
+                                    name: format!(
+                                        "opus decoder and receiver for {}-{}-{idx}",
+                                        base64_serialize(&message.raw.conversation.hash()).unwrap(),
+                                        base64_serialize(&message.ticket.owner_id).unwrap()
+                                    ),
                                     task: Box::pin(async move {
                                         loop {
                                             let Some(packet) = preceiver.recv().await else {
@@ -369,7 +392,7 @@ impl TheManService {
                                 .entry(message.raw.conversation.hash())
                                 .or_default();
                             let output = conversation
-                                .output_streams
+                                .outputs
                                 .entry(message.ticket.owner_id)
                                 .or_default();
 
@@ -385,9 +408,7 @@ impl TheManService {
                             return;
                         };
 
-                        let Some(output) = conversation
-                            .output_streams
-                            .get_mut(&message.ticket.owner_id)
+                        let Some(output) = conversation.outputs.get_mut(&message.ticket.owner_id)
                         else {
                             error!("Play before start???");
                             return;
@@ -416,9 +437,7 @@ impl TheManService {
                             return;
                         };
 
-                        let Some(output) = conversation
-                            .output_streams
-                            .get_mut(&message.ticket.owner_id)
+                        let Some(output) = conversation.outputs.get_mut(&message.ticket.owner_id)
                         else {
                             error!("Stop before start???");
                             return;
@@ -433,7 +452,63 @@ impl TheManService {
 
     async fn handle_request(&mut self, request: ServiceRequest) {
         match request {
-            ServiceRequest::AddDefault(conversation_id, last_message) => {
+            ServiceRequest::Inputs(conversation_id, result_sender) => {
+                let Some(active) = self.conversations.get(&conversation_id) else {
+                    result_sender.send(vec![]);
+                    return;
+                };
+
+                result_sender.send(active.inputs.keys().cloned().collect::<Vec<_>>());
+            }
+
+            ServiceRequest::Outputs(conversation_id, node_id, result_sender) => {
+                let Some(active) = self.conversations.get(&conversation_id) else {
+                    result_sender.send(vec![]);
+                    return;
+                };
+
+                let Some(outputs) = active.outputs.get(&node_id) else {
+                    result_sender.send(vec![]);
+                    return;
+                };
+
+                result_sender.send(outputs.keys().cloned().collect::<Vec<_>>());
+            }
+
+            ServiceRequest::GetInputStream(conversation_id, idx, result_sender) => {
+                let Some(active) = self.conversations.get(&conversation_id) else {
+                    result_sender.send(usize::MAX);
+                    return;
+                };
+
+                let Some(input) = active.inputs.get(&idx) else {
+                    result_sender.send(usize::MAX);
+                    return;
+                };
+
+                result_sender.send(*input);
+            }
+
+            ServiceRequest::GetOutputStream(conversation_id, node_id, idx, result_sender) => {
+                let Some(active) = self.conversations.get(&conversation_id) else {
+                    result_sender.send(usize::MAX);
+                    return;
+                };
+
+                let Some(node_outputs) = active.outputs.get(&node_id) else {
+                    result_sender.send(usize::MAX);
+                    return;
+                };
+
+                let Some(output) = node_outputs.get(&idx) else {
+                    result_sender.send(usize::MAX);
+                    return;
+                };
+
+                result_sender.send(output.1);
+            }
+
+            ServiceRequest::AddInput(conversation_id, last_message, result_sender) => {
                 let mut conversation = self
                     .protocol
                     .get_conversation(conversation_id)
@@ -468,13 +543,54 @@ impl TheManService {
                     .unwrap();
                 let mut encoder = codec.create_encoder(encoder_settings).unwrap();
 
-                let (sender, mut receiver) = tokio::sync::mpsc::channel::<f32>(960);
+                let (sender, mut receiver) = channel::<f32>();
 
                 let protocol = self.protocol.clone();
 
+                let active = self.conversations.entry(conversation_id).or_default();
+                let idx = active.next_idx;
+                active.next_idx += 1;
+                drop(active);
+
                 let stream = StreamIN {
-                    name: format!("opus encoder"),
+                    name: format!(
+                        "opus encoder and sender for: {}-{idx}",
+                        base64_serialize(&conversation_id).unwrap()
+                    ),
                     task: Box::pin(async move {
+                        struct DropConversation(ConversationHandle<Store>, u32);
+                        impl std::ops::Deref for DropConversation {
+                            type Target = ConversationHandle<Store>;
+
+                            fn deref(&self) -> &Self::Target {
+                                &self.0
+                            }
+                        }
+
+                        impl std::ops::DerefMut for DropConversation {
+                            fn deref_mut(&mut self) -> &mut Self::Target {
+                                &mut self.0
+                            }
+                        }
+
+                        impl Drop for DropConversation {
+                            fn drop(&mut self) {
+                                info!("DropConversation");
+                                tokio::task::block_in_place(|| {
+                                    tokio::runtime::Handle::current().block_on(async {
+                                        self.0
+                                            .send(format!(
+                                                "{}",
+                                                Command::Auto(CommandAuto::Stop { idx: self.1 })
+                                            ))
+                                            .await;
+                                    });
+                                });
+                            }
+                        }
+
+                        let mut conversation = DropConversation(conversation, idx);
+
                         loop {
                             let Some(sample) = receiver.recv().await else {
                                 continue;
@@ -493,7 +609,7 @@ impl TheManService {
                                 conversation
                                     .send(format!(
                                         "{}",
-                                        Command::Auto(CommandAuto::Play { idx: 0, ticket })
+                                        Command::Auto(CommandAuto::Play { idx, ticket })
                                     ))
                                     .await;
                             }
@@ -504,16 +620,63 @@ impl TheManService {
 
                 let id = self.add_input_stream(stream);
                 let active = self.conversations.entry(conversation_id).or_default();
-                active.input_streams.insert(0, id);
+                active.inputs.insert(0, id);
+                _ = result_sender.send(idx);
             }
-            ServiceRequest::StopDefault(conversation_id) => {
+
+            ServiceRequest::StopInput(conversation_id, idx) => {
                 let active = self.conversations.entry(conversation_id).or_default();
-                let Some(stream) = active.input_streams.remove(&0) else {
+                let Some(stream) = active.inputs.remove(&idx) else {
                     error!("There is no input stream to remove");
                     return;
                 };
 
                 _ = self.in_streams.remove(&stream);
+            }
+
+            ServiceRequest::InputStreams(result_sender) => {
+                result_sender.send(self.in_streams.keys().cloned().collect::<Vec<_>>());
+            }
+
+            ServiceRequest::OutputStreams(result_sender) => {
+                result_sender.send(self.out_streams.keys().cloned().collect::<Vec<_>>());
+            }
+
+            ServiceRequest::StreamName(id, result_sender) => {
+                if let Some(stream) = self.in_streams.get(&id) {
+                    result_sender.send(Some(stream.name.clone()));
+                } else if let Some((stream, _)) = self.out_streams.get(&id) {
+                    result_sender.send(Some(stream.name.clone()));
+                } else {
+                    result_sender.send(None);
+                }
+            }
+
+            ServiceRequest::OutputStreamConnections(id, result_sender) => {
+                if let Some((_, connections)) = self.out_streams.get(&id) {
+                    result_sender.send(connections.clone());
+                } else {
+                    result_sender.send(vec![]);
+                }
+            }
+
+            ServiceRequest::OutputStreamConnect(id, to_id) => {
+                let Some((_, connections)) = self.out_streams.get_mut(&id) else {
+                    return;
+                };
+                if !connections.contains(&to_id) {
+                    connections.push(to_id);
+                }
+            }
+
+            ServiceRequest::OutputStreamDisconnect(id, from_id) => {
+                let Some((_, connections)) = self.out_streams.get_mut(&id) else {
+                    return;
+                };
+
+                if let Some(to_remove) = connections.iter().position(|id| *id == from_id) {
+                    connections.swap_remove(to_remove);
+                }
             }
         }
     }
@@ -571,9 +734,9 @@ impl TheMan {
             let node_id = endpoint.node_id();
             let message_receiver = message_receiver.clone();
             tokio::spawn(async move {
-                TheManService::new(protocol, node_id, message_receiver, receiver)
-                    .run()
-                    .await;
+                let mut service = TheManService::new(protocol, node_id, message_receiver, receiver);
+                service.setup();
+                service.run().await;
             })
         };
 
@@ -638,23 +801,124 @@ impl TheMan {
         self.node.endpoint().secret_key().clone()
     }
 
-    pub async fn add_conversation_output_default_stream(
+    pub async fn conversation_inputs(&self, conversation_id: Hash) -> Vec<u32> {
+        let (sender, receiver) = ochannel();
+        self.sender
+            .send(ServiceRequest::Inputs(conversation_id, sender))
+            .await
+            .unwrap();
+        receiver.await.unwrap()
+    }
+
+    pub async fn conversation_outputs(&self, conversation_id: Hash, node_id: NodeId) -> Vec<u32> {
+        let (sender, receiver) = ochannel();
+        self.sender
+            .send(ServiceRequest::Outputs(conversation_id, node_id, sender))
+            .await
+            .unwrap();
+        receiver.await.unwrap()
+    }
+
+    pub async fn conversation_create_input(
         &self,
         conversation_id: Hash,
         reply_to_message: Hash,
-    ) {
+    ) -> u32 {
+        let (sender, receiver) = ochannel();
+
         self.sender
-            .send(ServiceRequest::AddDefault(
+            .send(ServiceRequest::AddInput(
                 conversation_id,
                 reply_to_message,
+                sender,
             ))
+            .await
+            .unwrap();
+
+        receiver.await.unwrap()
+    }
+
+    pub async fn conversation_stop_input(&self, conversation_id: Hash, idx: u32) {
+        self.sender
+            .send(ServiceRequest::StopInput(conversation_id, idx))
             .await
             .unwrap();
     }
 
-    pub async fn stop_conversation_default_stream(&self, conversation_id: Hash) {
+    pub async fn conversation_input_stream(&self, conversation_id: Hash, idx: u32) -> usize {
+        let (sender, receiver) = ochannel();
         self.sender
-            .send(ServiceRequest::StopDefault(conversation_id))
+            .send(ServiceRequest::GetInputStream(conversation_id, idx, sender))
+            .await
+            .unwrap();
+        receiver.await.unwrap()
+    }
+
+    pub async fn conversation_output_stream(
+        &self,
+        conversation_id: Hash,
+        node_id: NodeId,
+        idx: u32,
+    ) -> usize {
+        let (sender, receiver) = ochannel();
+        self.sender
+            .send(ServiceRequest::GetOutputStream(
+                conversation_id,
+                node_id,
+                idx,
+                sender,
+            ))
+            .await
+            .unwrap();
+        receiver.await.unwrap()
+    }
+
+    pub async fn input_streams(&self) -> Vec<usize> {
+        let (sender, receiver) = ochannel();
+        self.sender
+            .send(ServiceRequest::InputStreams(sender))
+            .await
+            .unwrap();
+        receiver.await.unwrap()
+    }
+
+    pub async fn output_streams(&self) -> Vec<usize> {
+        let (sender, receiver) = ochannel();
+        self.sender
+            .send(ServiceRequest::OutputStreams(sender))
+            .await
+            .unwrap();
+        receiver.await.unwrap()
+    }
+
+    pub async fn stream_name(&self, id: usize) -> Option<String> {
+        let (sender, receiver) = ochannel();
+        self.sender
+            .send(ServiceRequest::StreamName(id, sender))
+            .await
+            .unwrap();
+        receiver.await.unwrap()
+    }
+
+    pub async fn output_stream_connections(&self, id: usize) -> Vec<usize> {
+        let (sender, receiver) = ochannel();
+        self.sender
+            .send(ServiceRequest::OutputStreamConnections(id, sender))
+            .await
+            .unwrap();
+        receiver.await.unwrap()
+    }
+
+    pub async fn output_stream_connect(&self, id: usize, to_id: usize) {
+        self.sender
+            .send(ServiceRequest::OutputStreamConnect(id, to_id))
+            .await
+            .unwrap();
+    }
+
+    pub async fn output_stream_disconnect(&self, id: usize, from_id: usize) {
+        self.sender
+            .send(ServiceRequest::OutputStreamDisconnect(id, from_id))
             .await
             .unwrap();
     }

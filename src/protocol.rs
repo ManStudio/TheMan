@@ -9,17 +9,18 @@ use chrono::Utc;
 use ed25519::Signature;
 use futures_util::StreamExt;
 use iroh::{
+    Endpoint, NodeAddr, NodeId, SecretKey,
     endpoint::{Connection, RecvStream, SendStream},
     protocol::ProtocolHandler,
-    Endpoint, NodeAddr, NodeId, SecretKey,
 };
 use iroh_blobs::{
-    downloader::DownloadRequest, net_protocol::Blobs, store::Store, BlobFormat, Hash, HashAndFormat,
+    BlobFormat, Hash, HashAndFormat, downloader::DownloadRequest, net_protocol::Blobs, store::Store,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{
+    Mutex, RwLock,
     mpsc::{Receiver, Sender},
-    oneshot, watch, Mutex, RwLock,
+    oneshot, watch,
 };
 use tracing::{debug, error, info};
 
@@ -372,11 +373,12 @@ impl<S: Store> TheManService<S> {
                 };
 
                 if !conversation.raw.nodes.contains(&ticket.owner_id) {
-                    debug!("Some body send a message in a conversation that is not part of, peer_id: {}, conversation: {}, message_ticket: {}",
-                                base64_serialize(&ticket.owner_id).unwrap(),
-                                base64_serialize(&raw.conversation.hash()).unwrap(),
-                                base64_serialize(&ticket).unwrap()
-                            );
+                    debug!(
+                        "Some body send a message in a conversation that is not part of, peer_id: {}, conversation: {}, message_ticket: {}",
+                        base64_serialize(&ticket.owner_id).unwrap(),
+                        base64_serialize(&raw.conversation.hash()).unwrap(),
+                        base64_serialize(&ticket).unwrap()
+                    );
                     _ = self.blobs.client().delete_blob(ticket.hash()).await;
                     continue;
                 }
@@ -419,13 +421,13 @@ impl<S: Store> TheManService<S> {
         match handle.await {
             Ok(stats) => {
                 info!(
-                        "Downloaded: {}, in time: {:?}, Bytes Written: {}, Bytes Readed: {} Speed: {} MBs",
-                        base64_serialize(&ticket.hash()).unwrap(),
-                        stats.elapsed,
-                        stats.bytes_written,
-                        stats.bytes_read,
-                        stats.mbits()
-                    );
+                    "Downloaded: {}, in time: {:?}, Bytes Written: {}, Bytes Readed: {} Speed: {} MBs",
+                    base64_serialize(&ticket.hash()).unwrap(),
+                    stats.elapsed,
+                    stats.bytes_written,
+                    stats.bytes_read,
+                    stats.mbits()
+                );
             }
             Err(err) => {
                 error!(
@@ -959,14 +961,14 @@ impl<S: Store> TheMan<S> {
                 continue;
             };
 
-            if tag.0 .0.starts_with(b"message/") {
-                let ticket_data = tag.0 .0.strip_prefix(b"message/").unwrap();
+            if tag.0.0.starts_with(b"message/") {
+                let ticket_data = tag.0.0.strip_prefix(b"message/").unwrap();
                 let ticket = base64_deserialize::<Ticket>(ticket_data).expect("Cannot deserialize");
                 messages_to_resolv.push(ticket);
             }
 
-            if tag.0 .0.starts_with(b"conversation/") {
-                let ticket_data = tag.0 .0.strip_prefix(b"conversation/").unwrap();
+            if tag.0.0.starts_with(b"conversation/") {
+                let ticket_data = tag.0.0.strip_prefix(b"conversation/").unwrap();
                 let ticket = base64_deserialize::<Ticket>(ticket_data).expect("Cannot deserialize");
                 conversations_to_resolv.push(ticket);
             }

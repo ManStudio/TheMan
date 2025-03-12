@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 use eframe::egui;
 use tracing::info;
 
-use crate::{gui::ToHash, Account};
+use crate::{Account, gui::ToHash};
 
 use super::{Pane, PaneConversation};
 
