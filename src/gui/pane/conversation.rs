@@ -182,7 +182,7 @@ impl Pane for PaneConversation {
                             let msg_hash = self.selected.unwrap();
                             context.add_task(Box::pin(async move {
                                 the_man
-                                    .add_conversation_default_stream(conversation, msg_hash)
+                                    .add_conversation_output_default_stream(conversation, msg_hash)
                                     .await;
                             }));
                         }

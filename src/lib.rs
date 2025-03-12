@@ -1,5 +1,7 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    future::Future,
+    pin::Pin,
     str::FromStr,
     sync::Arc,
 };
@@ -17,191 +19,31 @@ use protocol::{ConversationHandle, Message, RawConversation, TheMan as ProtocolT
 use serde::{de::DeserializeOwned, Serialize};
 use tracing::{error, info, warn};
 
-pub struct CommandData {
-    ticket: Ticket,
-    alt: String,
+mod command;
+use command::{Command, CommandAuto, CommandData};
+
+pub struct StreamIN {
+    name: String,
+    task: Pin<Box<dyn Future<Output = ()> + Send>>,
+    sender: tokio::sync::mpsc::Sender<f32>,
 }
 
-pub enum CommandAuto {
-    Start {
-        idx: u32,
-        codec_name: String,
-        codec_settings: BTreeMap<String, String>,
-    },
-    Play {
-        idx: u32,
-        ticket: Ticket,
-    },
-    Stop {
-        idx: u32,
-    },
+pub struct StreamOUT {
+    name: String,
+    task: Pin<Box<dyn Future<Output = ()> + Send>>,
+    receiver: tokio::sync::mpsc::Receiver<f32>,
 }
 
-pub enum Command {
-    Data(CommandData),
-    Auto(CommandAuto),
-}
+pub struct UnsafeSendSyncWrapper<T>(pub T);
 
-impl std::str::FromStr for Command {
-    type Err = ();
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        if !text.starts_with('/') {
-            return Err(());
-        }
-
-        let text = &text[1..];
-
-        let mut iterator = text.split(' ');
-
-        let Some(command) = iterator.next() else {
-            return Err(());
-        };
-
-        match command {
-            "data" => {
-                let Some(ticket_data) = iterator.next() else {
-                    return Err(());
-                };
-
-                let Ok(ticket) = base64_deserialize::<Ticket>(ticket_data) else {
-                    return Err(());
-                };
-
-                let mut alt = iterator.fold(String::default(), |mut acc, segment| {
-                    acc.push_str(segment);
-                    acc.push(' ');
-                    acc
-                });
-
-                if alt.ends_with(' ') {
-                    alt.pop();
-                }
-
-                Ok(Self::Data(CommandData { ticket, alt }))
-            }
-            "auto" => {
-                let Some(subcommand) = iterator.next() else {
-                    return Err(());
-                };
-
-                match subcommand {
-                    "start" => {
-                        let Some(idx_text) = iterator.next() else {
-                            return Err(());
-                        };
-
-                        let Ok(idx) = u32::from_str(idx_text) else {
-                            return Err(());
-                        };
-
-                        let Some(codec_name) = iterator.next() else {
-                            return Err(());
-                        };
-
-                        let codec_name = codec_name.to_owned();
-
-                        let Some(codec_settings_text) = iterator.next() else {
-                            return Err(());
-                        };
-
-                        let Ok(codec_settings) =
-                            base64_deserialize::<BTreeMap<String, String>>(codec_settings_text)
-                        else {
-                            return Err(());
-                        };
-
-                        Ok(Self::Auto(CommandAuto::Start {
-                            idx,
-                            codec_name,
-                            codec_settings,
-                        }))
-                    }
-                    "play" => {
-                        let Some(idx_text) = iterator.next() else {
-                            return Err(());
-                        };
-
-                        let Ok(idx) = u32::from_str(idx_text) else {
-                            return Err(());
-                        };
-
-                        let Some(ticket_text) = iterator.next() else {
-                            return Err(());
-                        };
-
-                        let Ok(ticket) = base64_deserialize::<Ticket>(ticket_text) else {
-                            return Err(());
-                        };
-
-                        Ok(Self::Auto(CommandAuto::Play { idx, ticket }))
-                    }
-                    "stop" => {
-                        let Some(idx_text) = iterator.next() else {
-                            return Err(());
-                        };
-
-                        let Ok(idx) = u32::from_str(idx_text) else {
-                            return Err(());
-                        };
-
-                        Ok(Self::Auto(CommandAuto::Stop { idx }))
-                    }
-                    _ => Err(()),
-                }
-            }
-            _ => Err(()),
-        }
-    }
-}
-
-impl std::fmt::Display for Command {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Command::Data(CommandData { ticket, alt }) => f.write_fmt(format_args!(
-                "/data {} {alt}",
-                base64_serialize(ticket).unwrap()
-            )),
-            Command::Auto(command_auto) => match command_auto {
-                CommandAuto::Start {
-                    idx,
-                    codec_name,
-                    codec_settings,
-                } => f.write_fmt(format_args!(
-                    "/auto start {idx} {codec_name} {}",
-                    base64_serialize(codec_settings).unwrap()
-                )),
-                CommandAuto::Play { idx, ticket } => f.write_fmt(format_args!(
-                    "/auto play {idx} {}",
-                    base64_serialize(ticket).unwrap()
-                )),
-                CommandAuto::Stop { idx } => f.write_fmt(format_args!("/auto stop {idx}")),
-            },
-        }
-    }
-}
-
-pub struct InputStream {
-    stream: Option<Stream>,
-    task: tokio::task::JoinHandle<()>,
-    sender: tokio::sync::mpsc::Sender<()>,
-}
-
-unsafe impl Send for InputStream {}
-unsafe impl Sync for InputStream {}
-
-pub struct OutputStream {
-    sender: std::sync::mpsc::Sender<media_man::Packet>,
-    stream: Stream,
-}
-
-unsafe impl Send for OutputStream {}
-unsafe impl Sync for OutputStream {}
+unsafe impl<T> Send for UnsafeSendSyncWrapper<T> {}
+unsafe impl<T> Sync for UnsafeSendSyncWrapper<T> {}
 
 #[derive(Default)]
 pub struct ActiveConversation {
-    input_streams: BTreeMap<u32, InputStream>,
-    output_streams: BTreeMap<NodeId, BTreeMap<u32, OutputStream>>,
+    input_streams: BTreeMap<u32, usize>,
+    output_streams:
+        BTreeMap<NodeId, BTreeMap<u32, (tokio::sync::mpsc::Sender<media_man::Packet>, usize)>>,
 }
 
 enum ServiceRequest {
@@ -219,6 +61,11 @@ struct TheManService {
     audio_codecs: Vec<Box<dyn TCodecAudio>>,
 
     conversations: BTreeMap<Hash, ActiveConversation>,
+
+    next_id: usize,
+
+    in_streams: BTreeMap<usize, StreamIN>,
+    out_streams: BTreeMap<usize, (StreamOUT, Vec<usize>)>,
 }
 
 impl TheManService {
@@ -247,7 +94,125 @@ impl TheManService {
             host,
             audio_codecs,
             conversations: BTreeMap::default(),
+
+            next_id: 0,
+            in_streams: BTreeMap::default(),
+            out_streams: BTreeMap::default(),
         }
+    }
+
+    pub fn setup(&mut self) {
+        self.add_default_input();
+        self.add_default_output();
+    }
+
+    pub fn add_default_input(&mut self) {
+        if let Some(default_device) = self.host.default_input_device() {
+            let (sender, receiver) = tokio::sync::mpsc::channel::<f32>(960);
+
+            let Ok(stream) = default_device.build_input_stream(
+                &cpal::StreamConfig {
+                    channels: 1,
+                    sample_rate: cpal::SampleRate(48000),
+                    buffer_size: cpal::BufferSize::Fixed(960),
+                },
+                move |samples: &[f32], _info| {
+                    for sample in samples {
+                        if let Err(err) = sender.try_send(*sample) {
+                            error!("Default Audio Input cannot send: {err}");
+                        }
+                    }
+                },
+                |err| {
+                    error!("Default Audio Input: {err}");
+                },
+                None,
+            ) else {
+                error!("Found Default Audio Device but cannot open audio stream");
+                return;
+            };
+
+            let stream = UnsafeSendSyncWrapper(stream);
+
+            self.add_output_stream(StreamOUT {
+                name: format!(
+                    "OS Input: {}",
+                    default_device
+                        .name()
+                        .unwrap_or_else(|err| format!("Unknown {err}"))
+                ),
+                task: Box::pin(async move {
+                    let _stream = stream;
+                    std::future::pending().await
+                }),
+                receiver,
+            });
+        } else {
+            warn!("No input device found!");
+        }
+    }
+
+    pub fn add_default_output(&mut self) {
+        if let Some(default_device) = self.host.default_output_device() {
+            let (sender, mut receiver) = tokio::sync::mpsc::channel::<f32>(960);
+
+            let mut buffer = VecDeque::new();
+            let Ok(stream) = default_device.build_output_stream(
+                &cpal::StreamConfig {
+                    channels: 1,
+                    sample_rate: cpal::SampleRate(48000),
+                    buffer_size: cpal::BufferSize::Fixed(960),
+                },
+                move |samples: &mut [f32], _info| {
+                    while let Ok(sample) = receiver.try_recv() {
+                        buffer.push_back(sample);
+                    }
+
+                    for sample in samples {
+                        *sample = buffer.pop_front().unwrap_or(0.0);
+                    }
+                },
+                |err| {
+                    error!("Default Audio Output: {err}");
+                },
+                None,
+            ) else {
+                error!("Found Default Audio Device but cannot open audio stream");
+                return;
+            };
+
+            let stream = UnsafeSendSyncWrapper(stream);
+
+            self.add_input_stream(StreamIN {
+                name: format!(
+                    "OS Output: {}",
+                    default_device
+                        .name()
+                        .unwrap_or_else(|err| format!("Unknown {err}"))
+                ),
+                task: Box::pin(async move {
+                    let _stream = stream;
+                    std::future::pending().await
+                }),
+                sender,
+            });
+        } else {
+            warn!("No output device found!");
+        }
+    }
+
+    pub fn add_input_stream(&mut self, stream: StreamIN) -> usize {
+        let id = self.next_id;
+        self.next_id += 1;
+        _ = self.in_streams.insert(id, stream);
+        id
+    }
+
+    pub fn add_output_stream(&mut self, stream: StreamOUT) -> usize {
+        let id = self.next_id;
+        self.next_id += 1;
+        _ = self.out_streams.insert(id, (stream, Vec::default()));
+        id
     }
 
     pub async fn run(mut self) {
@@ -261,7 +226,39 @@ impl TheManService {
                 })
             };
 
+            let mut tasks = Vec::new();
+
+            let mut receivers = Vec::new();
+
+            for (id, (out_stream, inputs)) in unsafe {
+                std::mem::transmute::<
+                    std::collections::btree_map::IterMut<'_, usize, (StreamOUT, Vec<usize>)>,
+                    std::collections::btree_map::IterMut<'static, usize, (StreamOUT, Vec<usize>)>,
+                >(self.out_streams.iter_mut())
+            } {
+                tasks.push(&mut out_stream.task);
+                receivers.push(Box::pin(async {
+                    (out_stream.receiver.recv().await, inputs)
+                }))
+            }
+
+            for (id, in_stream) in self.in_streams.iter_mut() {
+                tasks.push(&mut in_stream.task);
+            }
+
             tokio::select! {
+                _ = futures_util::future::select_all(tasks) => {
+                    panic!("A task that should never finish has finished");
+                }
+                ((Some(sample), inputs), _, _) = futures_util::future::select_all(receivers) => {
+                    for input in inputs{
+                        for stream in self.in_streams.get_mut(input){
+                            if let Err(err) = stream.sender.try_send(sample){
+                                error!("Cannot send sample to: {}", stream.name);
+                            }
+                        }
+                    }
+                }
                 message = async {
                     message_receiver.await
                     .expect("Cannot receive message from the the-man service.")
@@ -325,8 +322,9 @@ impl TheManService {
                                 continue;
                             }
 
-                            let (sender, receiver) =
-                                std::sync::mpsc::channel::<media_man::Packet>();
+                            let (psender, mut preceiver) =
+                                tokio::sync::mpsc::channel::<media_man::Packet>(16);
+
                             let stream = {
                                 let decoder_settings = audio_codec
                                     .default_decoder_settings(
@@ -337,46 +335,34 @@ impl TheManService {
                                     .unwrap();
                                 let mut decoder =
                                     audio_codec.create_decoder(decoder_settings).unwrap();
+                                let (sender, receiver) = tokio::sync::mpsc::channel::<f32>(960);
 
-                                let default_output = self
-                                    .host
-                                    .default_output_device()
-                                    .expect("Cannot find default audio output device");
-                                info!(
-                                    "Using default audio output device: {:?}",
-                                    default_output.name()
-                                );
-
-                                let mut buffer = VecDeque::<f32>::default();
                                 let idx = *idx;
-                                default_output
-                                    .build_output_stream(
-                                        &cpal::StreamConfig {
-                                            channels: 1,
-                                            sample_rate: cpal::SampleRate(48000),
-                                            buffer_size: cpal::BufferSize::Fixed(960),
-                                        },
-                                        move |samples: &mut [f32], _info| {
-                                            while let Ok(packet) = receiver.try_recv() {
-                                                match decoder.decode(packet) {
-                                                    Ok(mut frames) => {
-                                                        buffer.extend(frames.remove(0).to_f32())
-                                                    }
-                                                    Err(err) => {
-                                                        error!("{err:?} when decoding for {idx}");
+                                StreamOUT {
+                                    name: format!("opus decode"),
+                                    task: Box::pin(async move {
+                                        loop {
+                                            let Some(packet) = preceiver.recv().await else {
+                                                continue;
+                                            };
+
+                                            match decoder.decode(packet) {
+                                                Ok(mut frames) => {
+                                                    for sample in frames.remove(0).to_f32() {
+                                                        sender.send(sample);
                                                     }
                                                 }
+                                                Err(err) => {
+                                                    error!("{err:?} when decoding for {idx}");
+                                                }
                                             }
-
-                                            for sample in samples {
-                                                *sample = buffer.pop_front().unwrap_or(0.0);
-                                            }
-                                        },
-                                        |err| error!("Default output error: {err}"),
-                                        None,
-                                    )
-                                    .expect("Cannot create default output audio stream.")
+                                        }
+                                    }),
+                                    receiver,
+                                }
                             };
+
+                            let id = self.add_output_stream(stream);
 
                             let conversation = self
                                 .conversations
@@ -386,7 +372,9 @@ impl TheManService {
                                 .output_streams
                                 .entry(message.ticket.owner_id)
                                 .or_default();
-                            output.insert(*idx, OutputStream { sender, stream });
+
+                            output.insert(*idx, (psender, id));
+                            break;
                         }
                     }
                     CommandAuto::Play { idx, ticket } => {
@@ -413,8 +401,8 @@ impl TheManService {
                         let data = self.protocol.get(ticket.clone()).await;
 
                         if output_stream
-                            .sender
-                            .send(media_man::Packet { data })
+                            .0
+                            .try_send(media_man::Packet { data })
                             .is_err()
                         {
                             output.remove(idx);
@@ -470,87 +458,62 @@ impl TheManService {
                     ))
                     .await;
 
-                let (p_sender, mut p_receiver) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
-                let (s_sender, mut s_receiver) = tokio::sync::mpsc::channel::<()>(1);
-                let stream = {
-                    let codec = self
-                        .audio_codecs
-                        .iter()
-                        .find(|codec| codec.name() == "opus")
-                        .expect("Cannot get opus codec");
-                    let encoder_settings = codec
-                        .default_encoder_settings(media_man::SampleFormat::F32, 48000, 1)
-                        .unwrap();
-                    let mut encoder = codec.create_encoder(encoder_settings).unwrap();
+                let codec = self
+                    .audio_codecs
+                    .iter()
+                    .find(|codec| codec.name() == "opus")
+                    .expect("Cannot get opus codec");
+                let encoder_settings = codec
+                    .default_encoder_settings(media_man::SampleFormat::F32, 48000, 1)
+                    .unwrap();
+                let mut encoder = codec.create_encoder(encoder_settings).unwrap();
 
-                    let input_device = self
-                        .host
-                        .default_input_device()
-                        .expect("Cannot get the default audio input device.");
-                    input_device
-                        .build_input_stream(
-                            &cpal::StreamConfig {
-                                channels: 1,
-                                sample_rate: cpal::SampleRate(48000),
-                                buffer_size: cpal::BufferSize::Fixed(960),
-                            },
-                            move |samples: &[f32], _info| {
-                                encoder
-                                    .encode(&[&media_man::FrameAudio::f32_new(samples.to_vec())])
-                                    .expect("Cannot encode");
-                                while let Some(packet) = encoder.get_packet() {
-                                    p_sender.try_send(packet.data).expect("Cannot send packet");
-                                }
-                            },
-                            |err| error!("{err} from default input stream"),
-                            None,
-                        )
-                        .unwrap()
-                };
+                let (sender, mut receiver) = tokio::sync::mpsc::channel::<f32>(960);
 
-                let active = self.conversations.entry(conversation_id).or_default();
-                let task = {
-                    let protocol = self.protocol.clone();
-                    tokio::spawn(async move {
+                let protocol = self.protocol.clone();
+
+                let stream = StreamIN {
+                    name: format!("opus encoder"),
+                    task: Box::pin(async move {
                         loop {
-                            tokio::select! {
-                                Some(packet) = p_receiver.recv() => {
-                                    let ticket = protocol.store(packet).await;
+                            let Some(sample) = receiver.recv().await else {
+                                continue;
+                            };
 
-                                    conversation
-                                        .send(format!("{}",
-                                            Command::Auto(CommandAuto::Play { idx: 0, ticket })
-                                        ))
-                                        .await;
-                                }
-                                Some(_shutdown) = s_receiver.recv() => {
-                                    conversation.send(format!("{}", Command::Auto(CommandAuto::Stop { idx: 0 }))).await;
-                                    break;
-                                }
+                            if let Err(err) =
+                                encoder.encode(&[&media_man::FrameAudio::f32_new(vec![sample])])
+                            {
+                                error!("opus encode: {err:?}");
+                                continue;
+                            }
+
+                            while let Some(packet) = encoder.get_packet() {
+                                let ticket = protocol.store(packet.data).await;
+
+                                conversation
+                                    .send(format!(
+                                        "{}",
+                                        Command::Auto(CommandAuto::Play { idx: 0, ticket })
+                                    ))
+                                    .await;
                             }
                         }
-                    })
+                    }),
+                    sender,
                 };
-                active.input_streams.insert(
-                    0,
-                    InputStream {
-                        stream: Some(stream),
-                        task,
-                        sender: s_sender,
-                    },
-                );
+
+                let id = self.add_input_stream(stream);
+                let active = self.conversations.entry(conversation_id).or_default();
+                active.input_streams.insert(0, id);
             }
             ServiceRequest::StopDefault(conversation_id) => {
                 let active = self.conversations.entry(conversation_id).or_default();
-                let Some(mut stream) = active.input_streams.remove(&0) else {
+                let Some(stream) = active.input_streams.remove(&0) else {
                     error!("There is no input stream to remove");
                     return;
                 };
 
-                _ = stream.stream.take();
-
-                stream.sender.send(()).await.unwrap();
-                stream.task.await.unwrap();
+                _ = self.in_streams.remove(&stream);
             }
         }
     }
@@ -675,7 +638,7 @@ impl TheMan {
         self.node.endpoint().secret_key().clone()
     }
 
-    pub async fn add_conversation_default_stream(
+    pub async fn add_conversation_output_default_stream(
         &self,
         conversation_id: Hash,
         reply_to_message: Hash,
