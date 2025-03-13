@@ -372,7 +372,7 @@ impl TheManService {
                                             match decoder.decode(packet) {
                                                 Ok(mut frames) => {
                                                     for sample in frames.remove(0).to_f32() {
-                                                        sender.send(sample);
+                                                        _ = sender.send(sample);
                                                     }
                                                 }
                                                 Err(err) => {
@@ -426,7 +426,9 @@ impl TheManService {
                             .try_send(media_man::Packet { data })
                             .is_err()
                         {
-                            output.remove(idx);
+                            if let Some((_, id)) = output.remove(idx) {
+                                self.out_streams.remove(&id);
+                            }
                         }
                     }
                     CommandAuto::Stop { idx } => {
@@ -443,7 +445,9 @@ impl TheManService {
                             return;
                         };
 
-                        output.remove(idx);
+                        if let Some((_, id)) = output.remove(idx) {
+                            self.out_streams.remove(&id);
+                        }
                     }
                 }
             }
@@ -454,58 +458,58 @@ impl TheManService {
         match request {
             ServiceRequest::Inputs(conversation_id, result_sender) => {
                 let Some(active) = self.conversations.get(&conversation_id) else {
-                    result_sender.send(vec![]);
+                    _ = result_sender.send(vec![]);
                     return;
                 };
 
-                result_sender.send(active.inputs.keys().cloned().collect::<Vec<_>>());
+                _ = result_sender.send(active.inputs.keys().cloned().collect::<Vec<_>>());
             }
 
             ServiceRequest::Outputs(conversation_id, node_id, result_sender) => {
                 let Some(active) = self.conversations.get(&conversation_id) else {
-                    result_sender.send(vec![]);
+                    _ = result_sender.send(vec![]);
                     return;
                 };
 
                 let Some(outputs) = active.outputs.get(&node_id) else {
-                    result_sender.send(vec![]);
+                    _ = result_sender.send(vec![]);
                     return;
                 };
 
-                result_sender.send(outputs.keys().cloned().collect::<Vec<_>>());
+                _ = result_sender.send(outputs.keys().cloned().collect::<Vec<_>>());
             }
 
             ServiceRequest::GetInputStream(conversation_id, idx, result_sender) => {
                 let Some(active) = self.conversations.get(&conversation_id) else {
-                    result_sender.send(usize::MAX);
+                    _ = result_sender.send(usize::MAX);
                     return;
                 };
 
                 let Some(input) = active.inputs.get(&idx) else {
-                    result_sender.send(usize::MAX);
+                    _ = result_sender.send(usize::MAX);
                     return;
                 };
 
-                result_sender.send(*input);
+                _ = result_sender.send(*input);
             }
 
             ServiceRequest::GetOutputStream(conversation_id, node_id, idx, result_sender) => {
                 let Some(active) = self.conversations.get(&conversation_id) else {
-                    result_sender.send(usize::MAX);
+                    _ = result_sender.send(usize::MAX);
                     return;
                 };
 
                 let Some(node_outputs) = active.outputs.get(&node_id) else {
-                    result_sender.send(usize::MAX);
+                    _ = result_sender.send(usize::MAX);
                     return;
                 };
 
                 let Some(output) = node_outputs.get(&idx) else {
-                    result_sender.send(usize::MAX);
+                    _ = result_sender.send(usize::MAX);
                     return;
                 };
 
-                result_sender.send(output.1);
+                _ = result_sender.send(output.1);
             }
 
             ServiceRequest::AddInput(conversation_id, last_message, result_sender) => {
@@ -550,7 +554,6 @@ impl TheManService {
                 let active = self.conversations.entry(conversation_id).or_default();
                 let idx = active.next_idx;
                 active.next_idx += 1;
-                drop(active);
 
                 let stream = StreamIN {
                     name: format!(

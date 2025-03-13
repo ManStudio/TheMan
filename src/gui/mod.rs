@@ -15,7 +15,7 @@ pub enum Event {
 }
 
 mod pane;
-use pane::{Pane, PaneActive, PaneConversations, PaneKnownNodes, PaneStatus};
+use pane::{Pane, PaneActive, PaneConversations, PaneKnownNodes, PaneOutStreams, PaneStatus};
 
 pub struct Context {
     receiver: mpsc::Receiver<Event>,
@@ -125,11 +125,12 @@ impl Dashboard {
         let conversations = tiles.insert_pane(Box::new(PaneConversations::default()));
         let known = tiles.insert_pane(Box::new(PaneKnownNodes::default()));
         let active = tiles.insert_pane(Box::new(PaneActive::default()));
+        let out_streams = tiles.insert_pane(Box::new(PaneOutStreams::default()));
         let status = tiles.insert_pane(Box::new(PaneStatus::default()));
 
         let welcome = tiles.insert_pane(Box::new(String::from("Welcome")));
 
-        let left_top = tiles.insert_tab_tile(vec![conversations, known, active]);
+        let left_top = tiles.insert_tab_tile(vec![conversations, known, active, out_streams]);
 
         let left = tiles.insert_vertical_tile(vec![left_top, status]);
         if let Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(liniar))) =

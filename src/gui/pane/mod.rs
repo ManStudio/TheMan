@@ -6,12 +6,14 @@ mod active;
 mod conversation;
 mod conversations;
 mod known_nodes;
+mod out_streams;
 mod status;
 
 pub use active::PaneActive;
 pub use conversation::PaneConversation;
 pub use conversations::PaneConversations;
 pub use known_nodes::PaneKnownNodes;
+pub use out_streams::PaneOutStreams;
 pub use status::PaneStatus;
 
 pub trait Pane {

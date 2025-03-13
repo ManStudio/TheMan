@@ -188,6 +188,7 @@ impl Pane for PaneConversation {
                                 egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
                             )
                             .show(ui, |ui| {
+                                ui.set_max_size(egui::Vec2::INFINITY);
                                 ui.horizontal(|ui| {
                                     for node_id in conversation.raw.nodes.iter() {
                                         ui.vertical(|ui| {
