@@ -3,6 +3,7 @@ use std::{future::Future, pin::Pin};
 use eframe::egui;
 use iroh::SecretKey;
 use iroh_blobs::Hash;
+use popup::Popup;
 use the_man::base64_deserialize;
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::info;
@@ -14,8 +15,12 @@ pub enum Event {
     Finished,
 }
 
-mod pane;
+pub mod pane;
 use pane::{Pane, PaneActive, PaneConversations, PaneKnownNodes, PaneOutStreams, PaneStatus};
+
+pub mod popup;
+
+pub mod component;
 
 pub struct Context {
     receiver: mpsc::Receiver<Event>,
@@ -26,6 +31,7 @@ pub struct Context {
 
     conversation_refreshes: usize,
     tabs: Vec<Box<dyn Pane>>,
+    popups: Vec<Box<dyn Popup>>,
 }
 
 impl Context {
@@ -37,6 +43,10 @@ impl Context {
 
     pub fn add_tab(&mut self, pane: impl Pane + 'static) {
         self.tabs.push(Box::new(pane));
+    }
+
+    pub fn add_popup(&mut self, popup: impl Popup + 'static) {
+        self.popups.push(Box::new(popup));
     }
 }
 
@@ -108,6 +118,9 @@ pub struct Dashboard {
     the_man: the_man::TheMan,
     account_id: usize,
     tree: egui_tiles::Tree<Box<dyn Pane>>,
+    popups: Vec<(u32, Box<dyn Popup>)>,
+    next_popup: u32,
+
     destination_tile: egui_tiles::TileId,
 
     message_receiver: Option<
@@ -157,6 +170,8 @@ impl Dashboard {
             tree,
             destination_tile: right,
             message_receiver: None,
+            popups: Default::default(),
+            next_popup: 0,
         }
     }
 
@@ -178,6 +193,26 @@ impl Dashboard {
             }
         }
 
+        self.popups.retain_mut(|(id, popup)| {
+            let mut close = false;
+            let mut res = true;
+
+            egui::Window::new(popup.name())
+                .open(&mut res)
+                .id(egui::Id::new("POPUP-").with(id))
+                .show(ui.ctx(), |ui| {
+                    if popup.show(ui, context, &mut data.accounts[self.account_id]) {
+                        close = true;
+                    }
+                });
+
+            if close {
+                res = false;
+            }
+
+            res
+        });
+
         let mut manager = DashboardManager {
             destination_tile: self.destination_tile,
             context,
@@ -189,6 +224,11 @@ impl Dashboard {
 
         for new_tab in std::mem::take(&mut context.tabs) {
             self.add_pane(new_tab);
+        }
+
+        for new_popup in std::mem::take(&mut context.popups) {
+            self.popups.push((self.next_popup, new_popup));
+            self.next_popup += 1;
         }
 
         if context.should_save {
@@ -283,6 +323,7 @@ impl App {
 
                 conversation_refreshes: 0,
                 tabs: Default::default(),
+                popups: Default::default(),
                 should_save: false,
             },
             data,

@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 
 use iroh::PublicKey;
 use iroh_blobs::Hash;
@@ -9,7 +9,6 @@ use the_man::{
 use tokio::sync::oneshot;
 
 use eframe::egui;
-use tracing::info;
 
 use crate::{Account, gui::ToHash};
 
