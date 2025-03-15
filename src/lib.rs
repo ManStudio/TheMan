@@ -638,28 +638,28 @@ impl TheManService {
             }
 
             ServiceRequest::InputStreams(result_sender) => {
-                result_sender.send(self.in_streams.keys().cloned().collect::<Vec<_>>());
+                _ = result_sender.send(self.in_streams.keys().cloned().collect::<Vec<_>>());
             }
 
             ServiceRequest::OutputStreams(result_sender) => {
-                result_sender.send(self.out_streams.keys().cloned().collect::<Vec<_>>());
+                _ = result_sender.send(self.out_streams.keys().cloned().collect::<Vec<_>>());
             }
 
             ServiceRequest::StreamName(id, result_sender) => {
                 if let Some(stream) = self.in_streams.get(&id) {
-                    result_sender.send(Some(stream.name.clone()));
+                    _ = result_sender.send(Some(stream.name.clone()));
                 } else if let Some((stream, _)) = self.out_streams.get(&id) {
-                    result_sender.send(Some(stream.name.clone()));
+                    _ = result_sender.send(Some(stream.name.clone()));
                 } else {
-                    result_sender.send(None);
+                    _ = result_sender.send(None);
                 }
             }
 
             ServiceRequest::OutputStreamConnections(id, result_sender) => {
                 if let Some((_, connections)) = self.out_streams.get(&id) {
-                    result_sender.send(connections.clone());
+                    _ = result_sender.send(connections.clone());
                 } else {
-                    result_sender.send(vec![]);
+                    _ = result_sender.send(vec![]);
                 }
             }
 

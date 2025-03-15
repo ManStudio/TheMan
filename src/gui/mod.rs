@@ -437,3 +437,9 @@ impl ToHash for iroh::PublicKey {
         Hash::from_bytes(*self.as_bytes())
     }
 }
+
+impl ToHash for Hash {
+    fn hash(&self) -> Hash {
+        *self
+    }
+}

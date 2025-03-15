@@ -365,6 +365,7 @@ impl Pane for PaneConversation {
                                                                             )
                                                                             .unwrap(),
                                                                         );
+                                                                        ui.close_menu();
                                                                     }
                                                                 },
                                                             );
@@ -406,6 +407,7 @@ impl Pane for PaneConversation {
                                                                             )
                                                                             .unwrap(),
                                                                         );
+                                                                        ui.close_menu();
                                                                     }
                                                                 });
                                                         }

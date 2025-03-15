@@ -621,6 +621,7 @@ impl<S: Store> TheManService<S> {
                 if sender.send(Some(ticket.hash())).is_err() {
                     error!("Cannot send");
                 }
+                _ = self.message_sender.send(None);
             }
             ServiceRequest::List(sender) => {
                 let Ok(_) = sender.send(self.conversations.keys().copied().collect::<Vec<_>>())
