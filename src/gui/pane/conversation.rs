@@ -52,7 +52,7 @@ pub struct PaneConversation {
     receive_conversation: Option<oneshot::Receiver<the_man::protocol::Conversation>>,
 
     o_receiver_tails: Option<oneshot::Receiver<Vec<Arc<TreeEntry>>>>,
-    receivers_messages: Vec<oneshot::Receiver<Message>>,
+    receivers_messages: Vec<oneshot::Receiver<Option<Message>>>,
 }
 
 impl Pane for PaneConversation {
@@ -156,6 +156,11 @@ impl Pane for PaneConversation {
         for mut receiver_message in std::mem::take(&mut self.receivers_messages) {
             let Ok(result) = receiver_message.try_recv() else {
                 self.receivers_messages.push(receiver_message);
+                continue;
+            };
+
+            let Some(result) = result else {
+                error!("Message lost");
                 continue;
             };
 
@@ -469,12 +474,12 @@ impl Pane for PaneConversation {
     }
 }
 
-async fn task_get_message(the_man: the_man::TheMan, hash: Hash, sender: oneshot::Sender<Message>) {
-    let msg = the_man
-        .get_message(hash)
-        .await
-        .expect("Cannot get the message");
-    _ = sender.send(msg);
+async fn task_get_message(
+    the_man: the_man::TheMan,
+    hash: Hash,
+    sender: oneshot::Sender<Option<Message>>,
+) {
+    _ = sender.send(the_man.get_message(hash).await);
 }
 
 fn sensor(ui: &mut egui::Ui) -> bool {

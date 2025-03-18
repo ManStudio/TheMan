@@ -9,7 +9,7 @@ use chrono::Utc;
 use ed25519::Signature;
 use futures_util::StreamExt;
 use iroh::{
-    Endpoint, NodeAddr, NodeId, SecretKey,
+    Endpoint, NodeId, SecretKey,
     endpoint::{Connection, RecvStream, SendStream},
     protocol::ProtocolHandler,
 };
@@ -52,6 +52,13 @@ pub const ALPN: &[u8] = b"the-man";
 pub struct Ticket {
     pub owner_id: NodeId,
     pub hash_and_format: HashAndFormat,
+    pub ttl: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TicketFor {
+    Data,
+    Message,
 }
 
 impl Ticket {
@@ -206,10 +213,13 @@ pub enum ServiceRequest {
     List(oneshot::Sender<Vec<Hash>>),
     GetMessage(Hash, oneshot::Sender<Option<Message>>),
     GetConversation(Hash, oneshot::Sender<Option<Conversation>>),
-    Send(RawMessage, oneshot::Sender<Option<Hash>>),
+    Send(RawMessage, u16, oneshot::Sender<Option<Hash>>),
     Recover(Ticket),
     RequestMessageSubscription(oneshot::Sender<watch::Receiver<Option<Message>>>),
     Add(Connection, (SendStream, RecvStream)),
+
+    Get(Ticket, oneshot::Sender<Option<Arc<[u8]>>>),
+    Store(Vec<u8>, u16, oneshot::Sender<Ticket>),
 }
 
 #[allow(dead_code)]
@@ -232,6 +242,11 @@ struct TheManService<S: Store> {
 
     messages: BTreeMap<Hash, Message>,
     conversations: BTreeMap<Hash, Conversation>,
+    datas: BTreeMap<Hash, (Ticket, Arc<[u8]>)>,
+
+    tickets_to_delete: BTreeMap<Hash, TicketFor>,
+
+    every_second: tokio::time::Interval,
 }
 
 impl<S: Store> TheManService<S> {
@@ -261,6 +276,9 @@ impl<S: Store> TheManService<S> {
 
                         }
                     }
+                    _ = async { if !self.tickets_to_delete.is_empty() {self.every_second.tick().await} else {std::future::pending().await} } => {
+                        self.handle_tick().await;
+                    }
                     request = self.receiver.recv() => {
                         let Some(request) = request else{
                             break;
@@ -286,12 +304,7 @@ impl<S: Store> TheManService<S> {
 
                 self.blobs
                     .store()
-                    .set_tag(
-                        iroh_blobs::Tag(
-                            format!("conversation/{}", base64_serialize(&ticket).unwrap()).into(),
-                        ),
-                        Some(ticket.hash_and_format),
-                    )
+                    .set_tag(tag_conversation(&ticket), Some(ticket.hash_and_format))
                     .await
                     .unwrap();
 
@@ -342,14 +355,14 @@ impl<S: Store> TheManService<S> {
 
                 self.blobs
                     .store()
-                    .set_tag(
-                        iroh_blobs::Tag(
-                            format!("message/{}", base64_serialize(&ticket).unwrap()).into(),
-                        ),
-                        Some(ticket.hash_and_format),
-                    )
+                    .set_tag(tag_message(&ticket), Some(ticket.hash_and_format))
                     .await
                     .unwrap();
+
+                if ticket.ttl != 0 {
+                    self.tickets_to_delete
+                        .insert(ticket.hash(), TicketFor::Message);
+                }
 
                 let Ok(raw) = bincode::serde::decode_from_slice::<RawMessage, _>(
                     &bytes,
@@ -596,6 +609,7 @@ impl<S: Store> TheManService<S> {
                         hash: res.hash,
                         format: res.format,
                     },
+                    ttl: 0,
                 };
 
                 self.blobs
@@ -656,7 +670,7 @@ impl<S: Store> TheManService<S> {
                     return;
                 };
             }
-            ServiceRequest::Send(raw_message, sender) => {
+            ServiceRequest::Send(raw_message, ttl, sender) => {
                 let Some(conversation) =
                     self.conversations.get_mut(&raw_message.conversation.hash())
                 else {
@@ -702,18 +716,19 @@ impl<S: Store> TheManService<S> {
                         hash: res.hash,
                         format: res.format,
                     },
+                    ttl,
                 };
 
                 self.blobs
                     .store()
-                    .set_tag(
-                        iroh_blobs::Tag(
-                            format!("message/{}", base64_serialize(&ticket).unwrap()).into(),
-                        ),
-                        Some(ticket.hash_and_format),
-                    )
+                    .set_tag(tag_message(&ticket), Some(ticket.hash_and_format))
                     .await
                     .unwrap();
+
+                if ticket.ttl != 0 {
+                    self.tickets_to_delete
+                        .insert(ticket.hash(), TicketFor::Message);
+                }
 
                 let last = raw_message.last.as_ref().map(|ticket| ticket.hash());
 
@@ -762,6 +777,66 @@ impl<S: Store> TheManService<S> {
             ServiceRequest::RequestMessageSubscription(sender) => {
                 if let Err(err) = sender.send(self.message_sender.subscribe()) {
                     error!("Cannot send subscription receiver! {err:?}");
+                }
+            }
+            ServiceRequest::Get(ticket, sender) => {
+                if let Some(data) = self.datas.get(&ticket.hash()) {
+                    _ = sender.send(Some(data.1.clone()));
+                    return;
+                }
+                if let Some(res) = self.download(&ticket).await {
+                    let data: Vec<u8> = res.into();
+                    let data: Arc<[u8]> = data.into();
+                    self.datas
+                        .insert(ticket.hash(), (ticket.clone(), data.clone()));
+
+                    if ticket.ttl != 0 {
+                        self.tickets_to_delete
+                            .insert(ticket.hash(), TicketFor::Data);
+                    }
+
+                    _ = sender.send(Some(data));
+                } else {
+                    _ = sender.send(None);
+                }
+            }
+            ServiceRequest::Store(data, ttl, sender) => {
+                let arc: Arc<[u8]> = data.clone().into();
+                let res = self
+                    .blobs
+                    .client()
+                    .add_bytes(data)
+                    .await
+                    .expect("Cannot add to store");
+
+                let ticket = Ticket {
+                    owner_id: self.endpoint.node_id(),
+                    hash_and_format: HashAndFormat {
+                        hash: res.hash,
+                        format: res.format,
+                    },
+                    ttl,
+                };
+
+                if ttl != 0 {
+                    self.tickets_to_delete
+                        .insert(ticket.hash(), TicketFor::Data);
+                }
+
+                self.datas.insert(ticket.hash(), (ticket.clone(), arc));
+
+                if let Err(err) = self
+                    .blobs
+                    .store()
+                    .set_tag(tag_data(&ticket), Some(ticket.hash_and_format))
+                    .await
+                {
+                    error!(
+                        "Cannot set tag for data: {err}, {}",
+                        base64_serialize(&ticket.hash()).unwrap()
+                    );
+                } else {
+                    _ = sender.send(ticket);
                 }
             }
         }
@@ -820,6 +895,127 @@ impl<S: Store> TheManService<S> {
                     base64_serialize(&node_id).unwrap()
                 );
                 messages_to_add.push(ticket);
+            }
+        }
+    }
+
+    pub async fn handle_tick(&mut self) {
+        info!("Tick");
+
+        let mut to_remove = Vec::default();
+        self.tickets_to_delete.retain(|hash, f| {
+            let ticket = match f {
+                TicketFor::Data => &mut self.datas.get_mut(hash).unwrap().0,
+                TicketFor::Message => &mut self.messages.get_mut(hash).unwrap().ticket,
+            };
+
+            if ticket.ttl == 1 {
+                to_remove.push((*f, *hash));
+                return false;
+            }
+
+            ticket.ttl -= 1;
+
+            true
+        });
+
+        for (f, hash) in to_remove {
+            let ticket = match f {
+                TicketFor::Data => &mut self.datas.get_mut(&hash).unwrap().0,
+                TicketFor::Message => &mut self.messages.get_mut(&hash).unwrap().ticket,
+            };
+
+            match f {
+                TicketFor::Data => {
+                    if let Err(err) = self.blobs.store().set_tag(tag_data(ticket), None).await {
+                        error!(
+                            "Cannot delete data: {err}, {}",
+                            base64_serialize(&hash).unwrap()
+                        );
+                    } else {
+                        _ = self.datas.remove(&hash);
+                    }
+                }
+                TicketFor::Message => {
+                    if let Err(err) = self.blobs.store().set_tag(tag_message(ticket), None).await {
+                        error!(
+                            "Cannot delete message: {err}, {}",
+                            base64_serialize(&hash).unwrap()
+                        );
+                    } else {
+                        _ = self.messages.remove(&hash).unwrap();
+                    }
+                }
+            }
+        }
+
+        for (hash, f) in self.tickets_to_delete.iter() {
+            let ticket = match f {
+                TicketFor::Data => &mut self.datas.get_mut(hash).unwrap().0,
+                TicketFor::Message => &mut self.messages.get_mut(hash).unwrap().ticket,
+            };
+
+            match f {
+                TicketFor::Data => {
+                    info!("Deleted data: {}", base64_serialize(&hash).unwrap());
+                    if let Err(err) = self
+                        .blobs
+                        .store()
+                        .set_tag(
+                            tag_data(&Ticket {
+                                ttl: ticket.ttl + 1,
+                                ..ticket.clone()
+                            }),
+                            None,
+                        )
+                        .await
+                    {
+                        error!(
+                            "Cannot begin refresh data: {err}, {}",
+                            base64_serialize(hash).unwrap()
+                        );
+                    } else if let Err(err) = self
+                        .blobs
+                        .store()
+                        .set_tag(tag_data(ticket), Some(ticket.hash_and_format))
+                        .await
+                    {
+                        error!(
+                            "Cannot end refresh data: {err}, {}",
+                            base64_serialize(hash).unwrap()
+                        );
+                    }
+                }
+                TicketFor::Message => {
+                    info!("Deleted message: {}", base64_serialize(hash).unwrap());
+                    if let Err(err) = self
+                        .blobs
+                        .store()
+                        .set_tag(
+                            tag_message(&Ticket {
+                                ttl: ticket.ttl + 1,
+                                ..ticket.clone()
+                            }),
+                            None,
+                        )
+                        .await
+                    {
+                        error!(
+                            "Cannot begin refresh message: {err}, {}",
+                            base64_serialize(hash).unwrap()
+                        );
+                    } else if let Err(err) = self
+                        .blobs
+                        .store()
+                        .set_tag(tag_message(ticket), Some(ticket.hash_and_format))
+                        .await
+                    {
+                        error!(
+                            "Cannot end refresh message: {err}, {}",
+                            base64_serialize(hash).unwrap()
+                        );
+                    }
+                }
             }
         }
     }
@@ -889,7 +1085,7 @@ impl<S: Store> ConversationHandle<S> {
         messages
     }
 
-    pub async fn send(&mut self, msg: impl Into<String>) {
+    pub async fn send(&mut self, msg: impl Into<String>, ttl: u16) {
         let conversation = self.get().await.ticket;
         let (sender, receiver) = tokio::sync::oneshot::channel();
 
@@ -901,6 +1097,7 @@ impl<S: Store> ConversationHandle<S> {
                     conversation,
                     data: msg.into(),
                 },
+                ttl,
                 sender,
             ))
             .await;
@@ -991,7 +1188,10 @@ impl<S: Store> TheMan<S> {
                     endpoint,
                     message_sender,
                     connections: BTreeMap::new(),
+                    datas: BTreeMap::default(),
                     blobs,
+                    tickets_to_delete: Default::default(),
+                    every_second: tokio::time::interval(tokio::time::Duration::from_secs(1)),
                 }
                 .run()
                 .await;
@@ -1077,9 +1277,11 @@ impl<S: Store> TheMan<S> {
         r.await.unwrap()
     }
 
-    pub async fn send_message(&self, raw: RawMessage) -> Option<Hash> {
+    pub async fn send_message(&self, raw: RawMessage, ttl: u16) -> Option<Hash> {
         let (s, r) = oneshot::channel();
-        self.inner.send_request(ServiceRequest::Send(raw, s)).await;
+        self.inner
+            .send_request(ServiceRequest::Send(raw, ttl, s))
+            .await;
         r.await.unwrap()
     }
 
@@ -1110,44 +1312,21 @@ impl<S: Store> TheMan<S> {
         self.inner.send_request(ServiceRequest::Add(conn, bi)).await;
     }
 
-    pub async fn store(&self, data: Vec<u8>) -> Ticket {
-        let res = self
-            .inner
-            .blobs
-            .client()
-            .add_bytes(data)
-            .await
-            .expect("Cannot add to store");
-        Ticket {
-            owner_id: self.endpoint.node_id(),
-            hash_and_format: HashAndFormat {
-                hash: res.hash,
-                format: res.format,
-            },
-        }
+    pub async fn store(&self, data: Vec<u8>, ttl: u16) -> Ticket {
+        let (sender, receiver) = oneshot::channel();
+        self.inner
+            .send_request(ServiceRequest::Store(data, ttl, sender))
+            .await;
+
+        receiver.await.unwrap()
     }
 
     pub async fn get(&self, ticket: Ticket) -> Vec<u8> {
-        let res = self
-            .inner
-            .blobs
-            .downloader()
-            .queue(DownloadRequest::new(
-                ticket.hash_and_format,
-                ticket.providers().map(|node_id| NodeAddr::from(*node_id)),
-            ))
-            .await
-            .await
-            .expect("Cannot download");
-
-        let bytes = self
-            .inner
-            .blobs
-            .client()
-            .read_to_bytes(ticket.hash())
-            .await
-            .expect("Cannot get bytes");
-        bytes.into()
+        let (sender, receiver) = oneshot::channel();
+        self.inner
+            .send_request(ServiceRequest::Get(ticket, sender))
+            .await;
+        receiver.await.unwrap().expect("Cannot get data").to_vec()
     }
 }
 
@@ -1184,4 +1363,16 @@ impl<S: Store> ProtocolHandler for TheMan<S> {
             }
         })
     }
+}
+
+fn tag_conversation(ticket: &Ticket) -> iroh_blobs::Tag {
+    iroh_blobs::Tag(format!("conversation/{}", base64_serialize(ticket).unwrap()).into())
+}
+
+fn tag_message(ticket: &Ticket) -> iroh_blobs::Tag {
+    iroh_blobs::Tag(format!("message/{}", base64_serialize(ticket).unwrap()).into())
+}
+
+fn tag_data(ticket: &Ticket) -> iroh_blobs::Tag {
+    iroh_blobs::Tag(format!("data/{}", base64_serialize(ticket).unwrap()).into())
 }

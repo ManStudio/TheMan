@@ -527,14 +527,17 @@ impl TheManService {
                 conversation.set_last(last);
 
                 conversation
-                    .send(format!(
-                        "{}",
-                        Command::Auto(CommandAuto::Start {
-                            idx: 0,
-                            codec_name: "opus".into(),
-                            codec_settings: BTreeMap::default()
-                        })
-                    ))
+                    .send(
+                        format!(
+                            "{}",
+                            Command::Auto(CommandAuto::Start {
+                                idx: 0,
+                                codec_name: "opus".into(),
+                                codec_settings: BTreeMap::default()
+                            })
+                        ),
+                        0,
+                    )
                     .await;
 
                 let codec = self
@@ -582,10 +585,15 @@ impl TheManService {
                                 tokio::task::block_in_place(|| {
                                     tokio::runtime::Handle::current().block_on(async {
                                         self.0
-                                            .send(format!(
-                                                "{}",
-                                                Command::Auto(CommandAuto::Stop { idx: self.1 })
-                                            ))
+                                            .send(
+                                                format!(
+                                                    "{}",
+                                                    Command::Auto(CommandAuto::Stop {
+                                                        idx: self.1
+                                                    })
+                                                ),
+                                                10,
+                                            )
                                             .await;
                                     });
                                 });
@@ -607,13 +615,16 @@ impl TheManService {
                             }
 
                             while let Some(packet) = encoder.get_packet() {
-                                let ticket = protocol.store(packet.data).await;
+                                let ticket = protocol.store(packet.data, 10).await;
 
                                 conversation
-                                    .send(format!(
-                                        "{}",
-                                        Command::Auto(CommandAuto::Play { idx, ticket })
-                                    ))
+                                    .send(
+                                        format!(
+                                            "{}",
+                                            Command::Auto(CommandAuto::Play { idx, ticket })
+                                        ),
+                                        10,
+                                    )
                                     .await;
                             }
                         }
@@ -767,7 +778,7 @@ impl TheMan {
     }
 
     pub async fn send_message(&self, raw: protocol::RawMessage) -> Option<iroh_blobs::Hash> {
-        self.protocol.send_message(raw).await
+        self.protocol.send_message(raw, 0).await
     }
 
     pub async fn get_message(&self, hash: iroh_blobs::Hash) -> Option<Message> {
