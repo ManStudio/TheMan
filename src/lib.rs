@@ -54,7 +54,7 @@ enum ServiceRequest {
     Inputs(Hash, OSender<Vec<u32>>),
     Outputs(Hash, NodeId, OSender<Vec<u32>>),
 
-    AddInput(Hash, Hash, OSender<u32>),
+    AddInput(Hash, Hash, u16, OSender<u32>),
     StopInput(Hash, u32),
 
     GetInputStream(Hash, u32, OSender<usize>),
@@ -512,7 +512,7 @@ impl TheManService {
                 _ = result_sender.send(output.1);
             }
 
-            ServiceRequest::AddInput(conversation_id, last_message, result_sender) => {
+            ServiceRequest::AddInput(conversation_id, last_message, ttl, result_sender) => {
                 let mut conversation = self
                     .protocol
                     .get_conversation(conversation_id)
@@ -564,7 +564,7 @@ impl TheManService {
                         base64_serialize(&conversation_id).unwrap()
                     ),
                     task: Box::pin(async move {
-                        struct DropConversation(ConversationHandle<Store>, u32);
+                        struct DropConversation(ConversationHandle<Store>, u32, u16);
                         impl std::ops::Deref for DropConversation {
                             type Target = ConversationHandle<Store>;
 
@@ -592,7 +592,7 @@ impl TheManService {
                                                         idx: self.1
                                                     })
                                                 ),
-                                                10,
+                                                self.2,
                                             )
                                             .await;
                                     });
@@ -600,7 +600,7 @@ impl TheManService {
                             }
                         }
 
-                        let mut conversation = DropConversation(conversation, idx);
+                        let mut conversation = DropConversation(conversation, idx, ttl);
 
                         loop {
                             let Some(sample) = receiver.recv().await else {
@@ -623,7 +623,7 @@ impl TheManService {
                                             "{}",
                                             Command::Auto(CommandAuto::Play { idx, ticket })
                                         ),
-                                        10,
+                                        ttl,
                                     )
                                     .await;
                             }
@@ -837,6 +837,7 @@ impl TheMan {
         &self,
         conversation_id: Hash,
         reply_to_message: Hash,
+        ttl: u16,
     ) -> u32 {
         let (sender, receiver) = ochannel();
 
@@ -844,6 +845,7 @@ impl TheMan {
             .send(ServiceRequest::AddInput(
                 conversation_id,
                 reply_to_message,
+                ttl,
                 sender,
             ))
             .await
@@ -947,6 +949,10 @@ impl TheMan {
 
     pub async fn connect(&self, node_id: NodeId) {
         self.protocol.connect(node_id).await;
+    }
+
+    pub async fn message_set_ttl(&self, hash: Hash, ttl: u16) {
+        self.protocol.message_set_ttl(hash, ttl).await;
     }
 }
 

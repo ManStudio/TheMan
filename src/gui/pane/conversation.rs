@@ -39,7 +39,6 @@ impl Entry {
     }
 }
 
-#[derive(Default)]
 pub struct PaneConversation {
     conversation_id: Option<Hash>,
     message: String,
@@ -53,6 +52,25 @@ pub struct PaneConversation {
 
     o_receiver_tails: Option<oneshot::Receiver<Vec<Arc<TreeEntry>>>>,
     receivers_messages: Vec<oneshot::Receiver<Option<Message>>>,
+
+    ttl: u16,
+}
+
+impl Default for PaneConversation {
+    fn default() -> Self {
+        Self {
+            conversation_id: Default::default(),
+            message: Default::default(),
+            selected: Default::default(),
+            conversation_refreshes: Default::default(),
+            tails: Default::default(),
+            conversation: Default::default(),
+            receive_conversation: Default::default(),
+            o_receiver_tails: Default::default(),
+            receivers_messages: Default::default(),
+            ttl: 10,
+        }
+    }
 }
 
 impl Pane for PaneConversation {
@@ -221,6 +239,8 @@ impl Pane for PaneConversation {
                     ui.vertical(|ui| {
                         ui.heading("IN");
 
+                        ui.add(egui::DragValue::new(&mut self.ttl).prefix("TTL: ").suffix("s").range(0..=u16::MAX).speed(1));
+
                         if ui
                             .add_enabled(self.selected.is_some(), egui::Button::new("Create Input"))
                             .on_disabled_hover_text(
@@ -231,9 +251,10 @@ impl Pane for PaneConversation {
                             let the_man = the_man.clone();
                             let conversation = *conversation_id;
                             let msg_hash = self.selected.unwrap();
+                            let ttl = self.ttl;
                             context.add_task(Box::pin(async move {
                                 the_man
-                                    .conversation_create_input(conversation, msg_hash)
+                                    .conversation_create_input(conversation, msg_hash, ttl)
                                     .await;
                             }));
                         }
@@ -412,6 +433,24 @@ impl Pane for PaneConversation {
                                                                             )
                                                                             .unwrap(),
                                                                         );
+                                                                        ui.close_menu();
+                                                                    }
+                                                                    if ui.small_button("Delete").clicked(){
+                                                                        let the_man = the_man.clone();
+                                                                        let hash = message.ticket.hash();
+                                                                        context.add_task(Box::pin(async move {
+                                                                            the_man.message_set_ttl(hash, 1).await;
+                                                                        }));
+
+                                                                        ui.close_menu();
+                                                                    }
+                                                                    if ui.small_button("Remove TTL").clicked(){
+                                                                        let the_man = the_man.clone();
+                                                                        let hash = message.ticket.hash();
+                                                                        context.add_task(Box::pin(async move {
+                                                                            the_man.message_set_ttl(hash, 0).await;
+                                                                        }));
+
                                                                         ui.close_menu();
                                                                     }
                                                                 });

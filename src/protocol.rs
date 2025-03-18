@@ -220,6 +220,8 @@ pub enum ServiceRequest {
 
     Get(Ticket, oneshot::Sender<Option<Arc<[u8]>>>),
     Store(Vec<u8>, u16, oneshot::Sender<Ticket>),
+
+    SetTTL(TicketFor, Hash, u16),
 }
 
 #[allow(dead_code)]
@@ -839,6 +841,42 @@ impl<S: Store> TheManService<S> {
                     _ = sender.send(ticket);
                 }
             }
+
+            ServiceRequest::SetTTL(f, hash, ttl) => {
+                if ttl == 0 {
+                    self.tickets_to_delete.remove(&hash);
+                }
+                match f {
+                    TicketFor::Data => {
+                        if let Some((ticket, _)) = self.datas.get_mut(&hash) {
+                            _ = self.blobs.store().set_tag(tag_data(ticket), None).await;
+                            ticket.ttl = ttl;
+                            _ = self
+                                .blobs
+                                .store()
+                                .set_tag(tag_data(ticket), Some(ticket.hash_and_format))
+                                .await;
+                            self.tickets_to_delete.insert(hash, f);
+                        }
+                    }
+                    TicketFor::Message => {
+                        if let Some(msg) = self.messages.get_mut(&hash) {
+                            _ = self
+                                .blobs
+                                .store()
+                                .set_tag(tag_message(&msg.ticket), None)
+                                .await;
+                            msg.ticket.ttl = ttl;
+                            _ = self
+                                .blobs
+                                .store()
+                                .set_tag(tag_message(&msg.ticket), Some(msg.ticket.hash_and_format))
+                                .await;
+                            self.tickets_to_delete.insert(hash, f);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1327,6 +1365,12 @@ impl<S: Store> TheMan<S> {
             .send_request(ServiceRequest::Get(ticket, sender))
             .await;
         receiver.await.unwrap().expect("Cannot get data").to_vec()
+    }
+
+    pub async fn message_set_ttl(&self, hash: Hash, ttl: u16) {
+        self.inner
+            .send_request(ServiceRequest::SetTTL(TicketFor::Message, hash, ttl))
+            .await;
     }
 }
 
