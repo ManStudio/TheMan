@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     future::Future,
     pin::Pin,
     sync::{Arc, Weak},
@@ -182,7 +182,15 @@ impl Conversation {
                     break 'adding;
                 }
 
-                panic!("The last entry cannot be found");
+                error!("The last entry cannot be found");
+
+                let entry = Arc::new(TreeEntry {
+                    prev: RwLock::new(None),
+                    hash,
+                    nexts: RwLock::default(),
+                });
+
+                self.tails.push(entry);
             }
         } else {
             let entry = Arc::new(TreeEntry {
@@ -208,7 +216,7 @@ pub enum Packet {
     SendMessage(Ticket),
 }
 
-pub enum ServiceRequest {
+enum ServiceRequest {
     Create(RawConversation, oneshot::Sender<Option<Hash>>),
     List(oneshot::Sender<Vec<Hash>>),
     GetMessage(Hash, oneshot::Sender<Option<Message>>),
@@ -243,6 +251,8 @@ struct TheManService<S: Store> {
     endpoint: iroh::Endpoint,
 
     messages: BTreeMap<Hash, Message>,
+    dead_messages: BTreeSet<Hash>,
+
     conversations: BTreeMap<Hash, Conversation>,
     datas: BTreeMap<Hash, (Ticket, Arc<[u8]>)>,
 
@@ -253,6 +263,11 @@ struct TheManService<S: Store> {
 
 impl<S: Store> TheManService<S> {
     pub async fn run(&mut self) {
+        _ = self.blobs.start_gc(iroh_blobs::store::GcConfig {
+            period: std::time::Duration::from_secs(60),
+            done_callback: Some(Box::new(|| info!("blobs GC finished!"))),
+        });
+
         let mut messages_to_add = std::mem::take(&mut self.messages_to_resolv);
         let mut conversations_to_add = std::mem::take(&mut self.conversations_to_resolv);
         loop {
@@ -352,6 +367,7 @@ impl<S: Store> TheManService<S> {
                         "Cannot get message: {}",
                         base64_serialize(&ticket.hash()).unwrap()
                     );
+                    self.dead_messages.insert(ticket.hash());
                     continue;
                 };
 
@@ -374,6 +390,7 @@ impl<S: Store> TheManService<S> {
                         "Cannot parse message: {}",
                         base64_serialize(&ticket.hash()).unwrap()
                     );
+                    self.dead_messages.insert(ticket.hash());
                     continue;
                 };
 
@@ -399,7 +416,9 @@ impl<S: Store> TheManService<S> {
                 }
 
                 if let Some(last) = raw.last.clone() {
-                    if !self.messages.contains_key(&last.hash()) {
+                    if !self.messages.contains_key(&last.hash())
+                        && !self.dead_messages.contains(&last.hash())
+                    {
                         messages_to_add.push(last);
                         messages_to_add.push(ticket);
                         skip = true;
@@ -597,7 +616,7 @@ impl<S: Store> TheManService<S> {
                 )
                 .unwrap();
 
-                let Ok(res) = self.blobs.client().add_bytes(bytes).await else {
+                let Ok(res) = self.blobs.client().add_bytes_named(bytes, tag_tmp()).await else {
                     error!("Cannot add bytes");
                     if sender.send(None).is_err() {
                         error!("Cannot send");
@@ -616,14 +635,11 @@ impl<S: Store> TheManService<S> {
 
                 self.blobs
                     .store()
-                    .set_tag(
-                        iroh_blobs::Tag(
-                            format!("conversation/{}", base64_serialize(&ticket).unwrap()).into(),
-                        ),
-                        Some(ticket.hash_and_format),
-                    )
+                    .set_tag(tag_conversation(&ticket), Some(ticket.hash_and_format))
                     .await
                     .unwrap();
+
+                _ = self.blobs.store().set_tag(tag_tmp(), None).await;
 
                 self.conversations.insert(
                     ticket.hash(),
@@ -702,7 +718,7 @@ impl<S: Store> TheManService<S> {
                 let Ok(res) = self
                     .blobs
                     .client()
-                    .add_bytes(bytes)
+                    .add_bytes_named(bytes, tag_tmp())
                     .await
                     .map_err(|err| error!("{err}: Cannot add message as blob"))
                 else {
@@ -726,6 +742,8 @@ impl<S: Store> TheManService<S> {
                     .set_tag(tag_message(&ticket), Some(ticket.hash_and_format))
                     .await
                     .unwrap();
+
+                _ = self.blobs.store().set_tag(tag_tmp(), None).await;
 
                 if ticket.ttl != 0 {
                     self.tickets_to_delete
@@ -807,7 +825,7 @@ impl<S: Store> TheManService<S> {
                 let res = self
                     .blobs
                     .client()
-                    .add_bytes(data)
+                    .add_bytes_named(data, tag_tmp())
                     .await
                     .expect("Cannot add to store");
 
@@ -840,6 +858,8 @@ impl<S: Store> TheManService<S> {
                 } else {
                     _ = sender.send(ticket);
                 }
+
+                _ = self.blobs.store().set_tag(tag_tmp(), None).await;
             }
 
             ServiceRequest::SetTTL(f, hash, ttl) => {
@@ -1196,17 +1216,20 @@ impl<S: Store> TheMan<S> {
             let Ok(tag) = tag else {
                 continue;
             };
+            info!("TAG: {:?}", tag.0.0);
 
             if tag.0.0.starts_with(b"message/") {
                 let ticket_data = tag.0.0.strip_prefix(b"message/").unwrap();
                 let ticket = base64_deserialize::<Ticket>(ticket_data).expect("Cannot deserialize");
                 messages_to_resolv.push(ticket);
+                continue;
             }
 
             if tag.0.0.starts_with(b"conversation/") {
                 let ticket_data = tag.0.0.strip_prefix(b"conversation/").unwrap();
                 let ticket = base64_deserialize::<Ticket>(ticket_data).expect("Cannot deserialize");
                 conversations_to_resolv.push(ticket);
+                continue;
             }
         }
 
@@ -1230,6 +1253,7 @@ impl<S: Store> TheMan<S> {
                     blobs,
                     tickets_to_delete: Default::default(),
                     every_second: tokio::time::interval(tokio::time::Duration::from_secs(1)),
+                    dead_messages: Default::default(),
                 }
                 .run()
                 .await;
@@ -1419,4 +1443,8 @@ fn tag_message(ticket: &Ticket) -> iroh_blobs::Tag {
 
 fn tag_data(ticket: &Ticket) -> iroh_blobs::Tag {
     iroh_blobs::Tag(format!("data/{}", base64_serialize(ticket).unwrap()).into())
+}
+
+fn tag_tmp() -> iroh_blobs::Tag {
+    iroh_blobs::Tag("TMP".into())
 }
