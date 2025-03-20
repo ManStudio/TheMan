@@ -242,6 +242,7 @@ struct Conn {
 struct TheManService<S: Store> {
     messages_to_resolv: Vec<Ticket>,
     conversations_to_resolv: Vec<Ticket>,
+    datas_to_resolv: Vec<Ticket>,
 
     connections: BTreeMap<NodeId, Conn>,
     message_sender: watch::Sender<Option<Message>>,
@@ -267,6 +268,21 @@ impl<S: Store> TheManService<S> {
             period: std::time::Duration::from_secs(60),
             done_callback: Some(Box::new(|| info!("blobs GC finished!"))),
         });
+
+        for ticket in std::mem::take(&mut self.datas_to_resolv) {
+            if ticket.ttl != 0 {
+                self.tickets_to_delete
+                    .insert(ticket.hash(), TicketFor::Data);
+                let data = self
+                    .blobs
+                    .client()
+                    .read_to_bytes(ticket.hash())
+                    .await
+                    .expect("????");
+                self.datas
+                    .insert(ticket.hash(), (ticket, Arc::from(Vec::from(data))));
+            }
+        }
 
         let mut messages_to_add = std::mem::take(&mut self.messages_to_resolv);
         let mut conversations_to_add = std::mem::take(&mut self.conversations_to_resolv);
@@ -1211,6 +1227,7 @@ impl<S: Store> TheMan<S> {
     ) -> Self {
         let mut messages_to_resolv = Vec::new();
         let mut conversations_to_resolv = Vec::new();
+        let mut datas_to_resolv = Vec::new();
 
         for tag in blobs.store().tags().await.unwrap() {
             let Ok(tag) = tag else {
@@ -1231,6 +1248,13 @@ impl<S: Store> TheMan<S> {
                 conversations_to_resolv.push(ticket);
                 continue;
             }
+
+            if tag.0.0.starts_with(b"data/") {
+                let ticket_data = tag.0.0.strip_prefix(b"data/").unwrap();
+                let ticket = base64_deserialize::<Ticket>(ticket_data).expect("Cannot deserialize");
+                datas_to_resolv.push(ticket);
+                continue;
+            }
         }
 
         let (sender, receiver) = tokio::sync::mpsc::channel(16);
@@ -1242,6 +1266,7 @@ impl<S: Store> TheMan<S> {
                 TheManService {
                     messages_to_resolv,
                     conversations_to_resolv,
+                    datas_to_resolv,
                     receiver,
                     downloader: blobs.downloader().clone(),
                     messages: BTreeMap::default(),
