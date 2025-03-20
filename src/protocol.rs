@@ -216,6 +216,54 @@ pub enum Packet {
     SendMessage(Ticket),
 }
 
+pub enum LazyData {
+    ToLoad(Ticket),
+    Loaded(Ticket, Arc<[u8]>),
+}
+
+impl LazyData {
+    pub async fn get<S: iroh_blobs::store::Store>(
+        &mut self,
+        blobs: &iroh_blobs::net_protocol::Blobs<S>,
+    ) -> Option<Arc<[u8]>> {
+        match self {
+            LazyData::ToLoad(ticket) => match blobs.client().read_to_bytes(ticket.hash()).await {
+                Ok(data) => {
+                    let Ok((signed, _len)) = bincode::serde::decode_from_slice::<Signed, _>(
+                        &data,
+                        bincode::config::legacy(),
+                    ) else {
+                        error!("Cannot parse Signed");
+                        return None;
+                    };
+                    let Ok(data) = signed.get(&ticket.owner_id) else {
+                        error!("Cannot verify");
+                        return None;
+                    };
+                    let data: Arc<[u8]> = Vec::from(data).into();
+                    *self = LazyData::Loaded(ticket.clone(), data.clone());
+                    Some(data)
+                }
+                Err(err) => {
+                    error!(
+                        "Cannot read data: {}, {err}",
+                        base64_serialize(ticket).unwrap()
+                    );
+                    None
+                }
+            },
+            LazyData::Loaded(_, data) => Some(data.clone()),
+        }
+    }
+
+    pub fn ticket(&mut self) -> &mut Ticket {
+        match self {
+            LazyData::ToLoad(ticket) => ticket,
+            LazyData::Loaded(ticket, _) => ticket,
+        }
+    }
+}
+
 enum ServiceRequest {
     Create(RawConversation, oneshot::Sender<Option<Hash>>),
     List(oneshot::Sender<Vec<Hash>>),
@@ -255,7 +303,7 @@ struct TheManService<S: Store> {
     dead_messages: BTreeSet<Hash>,
 
     conversations: BTreeMap<Hash, Conversation>,
-    datas: BTreeMap<Hash, (Ticket, Arc<[u8]>)>,
+    datas: BTreeMap<Hash, LazyData>,
 
     tickets_to_delete: BTreeMap<Hash, TicketFor>,
 
@@ -273,15 +321,8 @@ impl<S: Store> TheManService<S> {
             if ticket.ttl != 0 {
                 self.tickets_to_delete
                     .insert(ticket.hash(), TicketFor::Data);
-                let data = self
-                    .blobs
-                    .client()
-                    .read_to_bytes(ticket.hash())
-                    .await
-                    .expect("????");
-                self.datas
-                    .insert(ticket.hash(), (ticket, Arc::from(Vec::from(data))));
             }
+            self.datas.insert(ticket.hash(), LazyData::ToLoad(ticket));
         }
 
         let mut messages_to_add = std::mem::take(&mut self.messages_to_resolv);
@@ -816,20 +857,19 @@ impl<S: Store> TheManService<S> {
                 }
             }
             ServiceRequest::Get(ticket, sender) => {
-                if let Some(data) = self.datas.get(&ticket.hash()) {
-                    _ = sender.send(Some(data.1.clone()));
+                if let Some(data) = self.datas.get_mut(&ticket.hash()) {
+                    _ = sender.send(data.get(&self.blobs).await);
                     return;
                 }
                 if let Some(res) = self.download(&ticket).await {
                     let data: Vec<u8> = res.into();
                     let data: Arc<[u8]> = data.into();
-                    self.datas
-                        .insert(ticket.hash(), (ticket.clone(), data.clone()));
-
                     if ticket.ttl != 0 {
                         self.tickets_to_delete
                             .insert(ticket.hash(), TicketFor::Data);
                     }
+                    self.datas
+                        .insert(ticket.hash(), LazyData::Loaded(ticket, data.clone()));
 
                     _ = sender.send(Some(data));
                 } else {
@@ -859,7 +899,8 @@ impl<S: Store> TheManService<S> {
                         .insert(ticket.hash(), TicketFor::Data);
                 }
 
-                self.datas.insert(ticket.hash(), (ticket.clone(), arc));
+                self.datas
+                    .insert(ticket.hash(), LazyData::Loaded(ticket.clone(), arc));
 
                 if let Err(err) = self
                     .blobs
@@ -884,7 +925,8 @@ impl<S: Store> TheManService<S> {
                 }
                 match f {
                     TicketFor::Data => {
-                        if let Some((ticket, _)) = self.datas.get_mut(&hash) {
+                        if let Some(lazy) = self.datas.get_mut(&hash) {
+                            let ticket = lazy.ticket();
                             _ = self.blobs.store().set_tag(tag_data(ticket), None).await;
                             ticket.ttl = ttl;
                             _ = self
@@ -979,7 +1021,7 @@ impl<S: Store> TheManService<S> {
         let mut to_remove = Vec::default();
         self.tickets_to_delete.retain(|hash, f| {
             let ticket = match f {
-                TicketFor::Data => &mut self.datas.get_mut(hash).unwrap().0,
+                TicketFor::Data => self.datas.get_mut(hash).unwrap().ticket(),
                 TicketFor::Message => &mut self.messages.get_mut(hash).unwrap().ticket,
             };
 
@@ -995,7 +1037,7 @@ impl<S: Store> TheManService<S> {
 
         for (f, hash) in to_remove {
             let ticket = match f {
-                TicketFor::Data => &mut self.datas.get_mut(&hash).unwrap().0,
+                TicketFor::Data => self.datas.get_mut(&hash).unwrap().ticket(),
                 TicketFor::Message => &mut self.messages.get_mut(&hash).unwrap().ticket,
             };
 
@@ -1025,7 +1067,7 @@ impl<S: Store> TheManService<S> {
 
         for (hash, f) in self.tickets_to_delete.iter() {
             let ticket = match f {
-                TicketFor::Data => &mut self.datas.get_mut(hash).unwrap().0,
+                TicketFor::Data => self.datas.get_mut(hash).unwrap().ticket(),
                 TicketFor::Message => &mut self.messages.get_mut(hash).unwrap().ticket,
             };
 
