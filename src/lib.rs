@@ -278,11 +278,10 @@ impl TheManService {
                         }
                     }
                 }
-                message = async {
+                Some(message) = async {
                     message_receiver.await
                     .expect("Cannot receive message from the the-man service.")
                     .clone()
-                    .unwrap()
                 } => {
                     if let Ok(command) = Command::from_str(&message.raw.data) {
                         self.handle_command(message, command).await;
