@@ -68,7 +68,7 @@ impl Pane for PaneConversations {
                         tab.set_data(base64_serialize(conversation).unwrap());
                         context.add_tab(tab);
                     }
-                    with_name(*conversation, ui, context, account, |_| {});
+                    with_name(conversation, ui, context, account, |_| {});
                 });
             }
         });

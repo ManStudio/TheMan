@@ -49,7 +49,7 @@ impl Pane for PaneKnownNodes {
                         false
                     };
 
-                    with_name(known, ui, context, account, |ui| {
+                    with_name(&known, ui, context, account, |ui| {
                         if ui.small_button("Remove").clicked() {
                             to_remove.push(known);
                             ui.close_menu();

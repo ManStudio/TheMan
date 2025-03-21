@@ -8,7 +8,7 @@ use the_man::{
 use tokio::sync::oneshot;
 use tracing::{error, info};
 
-use crate::gui::ToHash;
+use crate::gui::{ToHash, component::with_name, popup};
 
 use super::Pane;
 
@@ -194,6 +194,21 @@ impl Pane for PaneConversation {
             }
         }
 
+        ui.horizontal(|ui| {
+            if ui.button("Set Conversation Name").clicked() {
+                context.add_popup(popup::PopupSetName::new(
+                    *conversation_id,
+                    account
+                        .known_as
+                        .get(conversation_id)
+                        .cloned()
+                        .unwrap_or_default(),
+                ));
+            };
+        });
+
+        ui.separator();
+
         egui::Frame::group(ui.style())
             .inner_margin(4)
             .outer_margin(4)
@@ -215,7 +230,7 @@ impl Pane for PaneConversation {
                                 ui.horizontal(|ui| {
                                     for node_id in conversation.raw.nodes.iter() {
                                         ui.vertical(|ui| {
-                                            ui.heading(account.known_as.get(&ToHash::hash(node_id)).cloned().unwrap_or_else(||base64_serialize(node_id).unwrap()));
+                                            with_name(node_id, ui, context, account, |_|{});
                                             egui::ScrollArea::vertical()
                                             .max_width(scroll_width)
                                             .id_salt(format!("OUT {node_id}"))
@@ -400,27 +415,11 @@ impl Pane for PaneConversation {
                                                             message,
                                                             tree_entry,
                                                         } => {
-                                                            let node_hash = ToHash::hash(
-                                                                &message.ticket.owner_id,
-                                                            );
+                                                            ui.horizontal(|ui|{
+                                                                ui.colored_label(egui::Color32::YELLOW, "From:");
+                                                                with_name(&message.ticket.owner_id, ui, context, account, |_| {});
+                                                            });
 
-                                                            ui.colored_label(
-                                                                egui::Color32::YELLOW,
-                                                                format!(
-                                                                    "From: {}",
-                                                                    account
-                                                                        .known_as
-                                                                        .get(&node_hash)
-                                                                        .cloned()
-                                                                        .unwrap_or_else(|| {
-                                                                            base64_serialize(
-                                                                                &node_hash,
-                                                                            )
-                                                                            .unwrap()
-                                                                            .to_string()
-                                                                        })
-                                                                ),
-                                                            );
                                                             ui.label(&message.raw.data)
                                                                 .context_menu(|ui| {
                                                                     if ui

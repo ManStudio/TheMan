@@ -6,7 +6,7 @@ use the_man::base64_serialize;
 use super::{Context, ToHash, popup::PopupSetName};
 
 pub fn with_name(
-    hash: impl ToHash,
+    hash: &impl ToHash,
     ui: &mut egui::Ui,
     context: &mut Context,
     account: &mut Account,

@@ -432,7 +432,7 @@ pub trait ToHash {
     fn hash(&self) -> Hash;
 }
 
-impl ToHash for iroh::PublicKey {
+impl ToHash for iroh::NodeId {
     fn hash(&self) -> Hash {
         Hash::from_bytes(*self.as_bytes())
     }
