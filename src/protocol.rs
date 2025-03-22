@@ -22,7 +22,7 @@ use tokio::sync::{
     mpsc::{Receiver, Sender},
     oneshot, watch,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 pub type Time = chrono::DateTime<chrono::Utc>;
 
@@ -314,7 +314,7 @@ impl<S: Store> TheManService<S> {
     pub async fn run(&mut self) {
         _ = self.blobs.start_gc(iroh_blobs::store::GcConfig {
             period: std::time::Duration::from_secs(60),
-            done_callback: Some(Box::new(|| info!("blobs GC finished!"))),
+            done_callback: Some(Box::new(|| debug!("blobs GC finished!"))),
         });
 
         for ticket in std::mem::take(&mut self.datas_to_resolv) {
@@ -404,7 +404,7 @@ impl<S: Store> TheManService<S> {
                     },
                 );
 
-                info!("Conversation added");
+                debug!("Conversation added");
                 _ = self.message_sender.send(None);
             }
 
@@ -487,7 +487,7 @@ impl<S: Store> TheManService<S> {
                     .add_message(ticket.hash(), raw.last.as_ref().map(|ticket| ticket.hash()))
                     .await;
 
-                info!(
+                debug!(
                     "Added message: {}",
                     base64_serialize(&ticket.hash()).unwrap()
                 );
@@ -626,7 +626,7 @@ impl<S: Store> TheManService<S> {
                                         return None;
                                     };
 
-                                    info!("Readed {}, from {}", cursor.position(), len);
+                                    trace!("Readed {}, from {}", cursor.position(), len);
 
                                     packets.push(packet);
 
@@ -833,10 +833,6 @@ impl<S: Store> TheManService<S> {
                     }
 
                     let Some(conn) = self.connections.get_mut(node_id) else {
-                        info!(
-                            "Cannot send message to: {}",
-                            base64_serialize(node_id).unwrap()
-                        );
                         continue;
                     };
 
@@ -966,7 +962,7 @@ impl<S: Store> TheManService<S> {
     ) {
         match packet {
             Packet::Welcome => {
-                info!("Welcome from: {}", base64_serialize(&node_id).unwrap());
+                debug!("Welcome from: {}", base64_serialize(&node_id).unwrap());
 
                 let connection = self
                     .connections
@@ -977,13 +973,13 @@ impl<S: Store> TheManService<S> {
                         continue;
                     }
 
-                    info!(
+                    debug!(
                         "Sending conversation tails to: {}",
                         base64_serialize(&node_id).unwrap()
                     );
 
                     for tail in conversation.tails.iter() {
-                        info!("Sending tail: {}", base64_serialize(&tail.hash).unwrap());
+                        debug!("Sending tail: {}", base64_serialize(&tail.hash).unwrap());
                         let mut buffer = Vec::new();
                         let msg = self.messages.get(&tail.hash).expect("Cannot send message entry because we don't have the message from the entry");
                         ciborium::into_writer(
@@ -1005,7 +1001,7 @@ impl<S: Store> TheManService<S> {
             }
 
             Packet::SendMessage(ticket) => {
-                info!(
+                debug!(
                     "Received {} from: {}",
                     base64_serialize(&ticket).unwrap(),
                     base64_serialize(&node_id).unwrap()
@@ -1016,7 +1012,7 @@ impl<S: Store> TheManService<S> {
     }
 
     pub async fn handle_tick(&mut self) {
-        info!("Tick");
+        trace!("To Delete Tick");
 
         let mut to_remove = Vec::default();
         self.tickets_to_delete.retain(|hash, f| {
@@ -1073,7 +1069,7 @@ impl<S: Store> TheManService<S> {
 
             match f {
                 TicketFor::Data => {
-                    info!("Deleted data: {}", base64_serialize(&hash).unwrap());
+                    debug!("Deleted data: {}", base64_serialize(&hash).unwrap());
                     if let Err(err) = self
                         .blobs
                         .store()
@@ -1103,7 +1099,7 @@ impl<S: Store> TheManService<S> {
                     }
                 }
                 TicketFor::Message => {
-                    info!("Deleted message: {}", base64_serialize(hash).unwrap());
+                    debug!("Deleted message: {}", base64_serialize(hash).unwrap());
                     if let Err(err) = self
                         .blobs
                         .store()
@@ -1275,7 +1271,8 @@ impl<S: Store> TheMan<S> {
             let Ok(tag) = tag else {
                 continue;
             };
-            info!("TAG: {:?}", tag.0.0);
+
+            debug!("TAG: {:?}", tag.0.0);
 
             if tag.0.0.starts_with(b"message/") {
                 let ticket_data = tag.0.0.strip_prefix(b"message/").unwrap();
@@ -1472,7 +1469,7 @@ impl<S: Store> ProtocolHandler for TheMan<S> {
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>> {
         let inner = self.inner.clone();
         Box::pin(async move {
-            info!("Incomming connection..");
+            trace!("Incomming connection..");
             let connection = connecting
                 .await
                 .inspect_err(|err| error!("Connect Fail: {err}"))?;

@@ -381,7 +381,7 @@ impl Pane for PaneConversation {
                                                 }
                                             }
 
-                                            for msg in tail.iter() {
+                                            for msg in tail.iter_mut() {
                                                 let mut selected = self
                                                     .selected
                                                     .map(|hash| hash == msg.get_hash())
@@ -390,6 +390,9 @@ impl Pane for PaneConversation {
 
                                                 ui.group(|ui| {
                                                     ui.checkbox(&mut selected, "");
+
+                                                    let mut to_delete = false;
+
                                                     match msg {
                                                         Entry::Loading(tree_entry) => {
                                                             ui.label("spinner").context_menu(
@@ -413,7 +416,7 @@ impl Pane for PaneConversation {
                                                         }
                                                         Entry::Node {
                                                             message,
-                                                            tree_entry,
+                                                            ..
                                                         } => {
                                                             ui.horizontal(|ui|{
                                                                 ui.colored_label(egui::Color32::YELLOW, "From:");
@@ -441,6 +444,8 @@ impl Pane for PaneConversation {
                                                                             the_man.message_set_ttl(hash, 1).await;
                                                                         }));
 
+                                                                        to_delete = true;
+
                                                                         ui.close_menu();
                                                                     }
                                                                     if ui.small_button("Remove TTL").clicked(){
@@ -454,6 +459,10 @@ impl Pane for PaneConversation {
                                                                     }
                                                                 });
                                                         }
+                                                    }
+
+                                                    if to_delete{
+                                                        *msg = Entry::Loading(msg.tree_entry());
                                                     }
                                                 });
 

@@ -420,6 +420,7 @@ impl eframe::App for App {
                             known_as: Default::default(),
                             known_nodes: Default::default(),
                         });
+                        self.data.save();
                         self.create = false;
                     }
                 });

@@ -31,6 +31,7 @@ impl Popup for PopupSetName {
             .show(ui);
         if ui.button("Set Name").clicked() {
             account.known_as.insert(self.hash, self.name.clone());
+            context.should_save = true;
 
             return true;
         }

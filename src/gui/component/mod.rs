@@ -18,6 +18,7 @@ pub fn with_name(
         ui.label(&name).context_menu(|ui| {
             if ui.small_button("Remove Name").clicked() {
                 account.known_as.remove(&hash);
+                context.should_save = true;
                 ui.close_menu();
             }
 
