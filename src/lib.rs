@@ -614,7 +614,7 @@ impl TheManService {
                             }
 
                             while let Some(packet) = encoder.get_packet() {
-                                let ticket = protocol.store(packet.data, 10).await;
+                                let ticket = protocol.store(packet.data, ttl).await;
 
                                 conversation
                                     .send(

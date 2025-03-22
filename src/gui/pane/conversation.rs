@@ -8,7 +8,7 @@ use the_man::{
 use tokio::sync::oneshot;
 use tracing::{error, info};
 
-use crate::gui::{ToHash, component::with_name, popup};
+use crate::gui::{component::with_name, popup};
 
 use super::Pane;
 
