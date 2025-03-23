@@ -55,7 +55,7 @@ impl Pane for PaneConversations {
             if ui.button("Create").clicked() {
                 context.add_popup(PopupCreateConversation::new(the_man.clone()));
             }
-            if ui.button("Recover").clicked() {
+            if ui.button("Request Messages").clicked() {
                 context.add_popup(PopupRequestMessages::new(the_man.clone()));
             }
         });

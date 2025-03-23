@@ -25,7 +25,9 @@ impl Popup for PopupAddNode {
 
         let node = base64_deserialize::<NodeId>(&self.input_node);
         if let Err(err) = &node {
-            ui.colored_label(egui::Color32::RED, format!("Node Id: {err:?}"));
+            if !self.input_node.is_empty() {
+                ui.colored_label(egui::Color32::RED, format!("Node Id: {err:?}"));
+            }
         }
 
         ui.horizontal(|ui| {

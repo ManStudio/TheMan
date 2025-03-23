@@ -42,12 +42,14 @@ impl Popup for PopupRequestMessages {
                     }
                 }
                 Err(err) => {
-                    ui.colored_label(egui::Color32::RED, format!("Invalid Ticket: {err:?}"));
+                    if !self.input.is_empty() {
+                        ui.colored_label(egui::Color32::RED, format!("Invalid Ticket: {err:?}"));
+                    }
                 }
             }
         });
 
-        if ui.button("Request Messages").clicked() {
+        if !self.tickets.is_empty() && ui.button("Request Messages").clicked() {
             let the_man = self.the_man.clone();
             let tickets = self.tickets.iter().cloned().collect::<Vec<_>>();
 
