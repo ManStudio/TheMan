@@ -23,9 +23,9 @@ ciborium = "0.2.2"
 cpal = "0.15.3"
 ed25519 = { version = "2.2.3", features = ["serde", "serde_bytes"] }
 futures-util = "0.3.31"
-iroh = "0.33"
-iroh-blobs = { version = "0.33", features = ["rpc"] }
-iroh-gossip = { version = "0.33", features = ["rpc"] }
+iroh = "0.34"
+iroh-blobs = { version = "0.34", features = ["rpc"] }
+iroh-gossip = { version = "0.34", features = ["rpc"] }
 media-man = { path = "crates/media-man", features = ["codec-opus"] }
 rand = "0.8"
 serde = { version = "1.0.217", features = ["derive"] }
@@ -35,5 +35,4 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 eframe = {version = "0.31" }
 anyhow = "1"
-blake3 = { version = "1.6", features = ["serde"] }
 egui_tiles = "0.12.0"

@@ -378,7 +378,7 @@ impl<S: Store> TheManService<S> {
 
                 self.blobs
                     .store()
-                    .set_tag(tag_conversation(&ticket), Some(ticket.hash_and_format))
+                    .set_tag(tag_conversation(&ticket), ticket.hash_and_format)
                     .await
                     .unwrap();
 
@@ -430,7 +430,7 @@ impl<S: Store> TheManService<S> {
 
                 self.blobs
                     .store()
-                    .set_tag(tag_message(&ticket), Some(ticket.hash_and_format))
+                    .set_tag(tag_message(&ticket), ticket.hash_and_format)
                     .await
                     .unwrap();
 
@@ -692,11 +692,11 @@ impl<S: Store> TheManService<S> {
 
                 self.blobs
                     .store()
-                    .set_tag(tag_conversation(&ticket), Some(ticket.hash_and_format))
+                    .set_tag(tag_conversation(&ticket), ticket.hash_and_format)
                     .await
                     .unwrap();
 
-                _ = self.blobs.store().set_tag(tag_tmp(), None).await;
+                _ = self.blobs.store().delete_tag(tag_tmp()).await;
 
                 self.conversations.insert(
                     ticket.hash(),
@@ -796,11 +796,11 @@ impl<S: Store> TheManService<S> {
 
                 self.blobs
                     .store()
-                    .set_tag(tag_message(&ticket), Some(ticket.hash_and_format))
+                    .set_tag(tag_message(&ticket), ticket.hash_and_format)
                     .await
                     .unwrap();
 
-                _ = self.blobs.store().set_tag(tag_tmp(), None).await;
+                _ = self.blobs.store().delete_tag(tag_tmp()).await;
 
                 if ticket.ttl != 0 {
                     self.tickets_to_delete
@@ -901,7 +901,7 @@ impl<S: Store> TheManService<S> {
                 if let Err(err) = self
                     .blobs
                     .store()
-                    .set_tag(tag_data(&ticket), Some(ticket.hash_and_format))
+                    .set_tag(tag_data(&ticket), ticket.hash_and_format)
                     .await
                 {
                     error!(
@@ -912,7 +912,7 @@ impl<S: Store> TheManService<S> {
                     _ = sender.send(ticket);
                 }
 
-                _ = self.blobs.store().set_tag(tag_tmp(), None).await;
+                _ = self.blobs.store().delete_tag(tag_tmp()).await;
             }
 
             ServiceRequest::SetTTL(f, hash, ttl) => {
@@ -923,12 +923,12 @@ impl<S: Store> TheManService<S> {
                     TicketFor::Data => {
                         if let Some(lazy) = self.datas.get_mut(&hash) {
                             let ticket = lazy.ticket();
-                            _ = self.blobs.store().set_tag(tag_data(ticket), None).await;
+                            _ = self.blobs.store().delete_tag(tag_data(ticket)).await;
                             ticket.ttl = ttl;
                             _ = self
                                 .blobs
                                 .store()
-                                .set_tag(tag_data(ticket), Some(ticket.hash_and_format))
+                                .set_tag(tag_data(ticket), ticket.hash_and_format)
                                 .await;
                             self.tickets_to_delete.insert(hash, f);
                         }
@@ -938,13 +938,13 @@ impl<S: Store> TheManService<S> {
                             _ = self
                                 .blobs
                                 .store()
-                                .set_tag(tag_message(&msg.ticket), None)
+                                .delete_tag(tag_message(&msg.ticket))
                                 .await;
                             msg.ticket.ttl = ttl;
                             _ = self
                                 .blobs
                                 .store()
-                                .set_tag(tag_message(&msg.ticket), Some(msg.ticket.hash_and_format))
+                                .set_tag(tag_message(&msg.ticket), msg.ticket.hash_and_format)
                                 .await;
                             self.tickets_to_delete.insert(hash, f);
                         }
@@ -1039,7 +1039,7 @@ impl<S: Store> TheManService<S> {
 
             match f {
                 TicketFor::Data => {
-                    if let Err(err) = self.blobs.store().set_tag(tag_data(ticket), None).await {
+                    if let Err(err) = self.blobs.store().delete_tag(tag_data(ticket)).await {
                         error!(
                             "Cannot delete data: {err}, {}",
                             base64_serialize(&hash).unwrap()
@@ -1049,7 +1049,7 @@ impl<S: Store> TheManService<S> {
                     }
                 }
                 TicketFor::Message => {
-                    if let Err(err) = self.blobs.store().set_tag(tag_message(ticket), None).await {
+                    if let Err(err) = self.blobs.store().delete_tag(tag_message(ticket)).await {
                         error!(
                             "Cannot delete message: {err}, {}",
                             base64_serialize(&hash).unwrap()
@@ -1073,13 +1073,10 @@ impl<S: Store> TheManService<S> {
                     if let Err(err) = self
                         .blobs
                         .store()
-                        .set_tag(
-                            tag_data(&Ticket {
-                                ttl: ticket.ttl + 1,
-                                ..ticket.clone()
-                            }),
-                            None,
-                        )
+                        .delete_tag(tag_data(&Ticket {
+                            ttl: ticket.ttl + 1,
+                            ..ticket.clone()
+                        }))
                         .await
                     {
                         error!(
@@ -1089,7 +1086,7 @@ impl<S: Store> TheManService<S> {
                     } else if let Err(err) = self
                         .blobs
                         .store()
-                        .set_tag(tag_data(ticket), Some(ticket.hash_and_format))
+                        .set_tag(tag_data(ticket), ticket.hash_and_format)
                         .await
                     {
                         error!(
@@ -1103,13 +1100,10 @@ impl<S: Store> TheManService<S> {
                     if let Err(err) = self
                         .blobs
                         .store()
-                        .set_tag(
-                            tag_message(&Ticket {
-                                ttl: ticket.ttl + 1,
-                                ..ticket.clone()
-                            }),
-                            None,
-                        )
+                        .delete_tag(tag_message(&Ticket {
+                            ttl: ticket.ttl + 1,
+                            ..ticket.clone()
+                        }))
                         .await
                     {
                         error!(
@@ -1119,7 +1113,7 @@ impl<S: Store> TheManService<S> {
                     } else if let Err(err) = self
                         .blobs
                         .store()
-                        .set_tag(tag_message(ticket), Some(ticket.hash_and_format))
+                        .set_tag(tag_message(ticket), ticket.hash_and_format)
                         .await
                     {
                         error!(
@@ -1267,7 +1261,7 @@ impl<S: Store> TheMan<S> {
         let mut conversations_to_resolv = Vec::new();
         let mut datas_to_resolv = Vec::new();
 
-        for tag in blobs.store().tags().await.unwrap() {
+        for tag in blobs.store().tags(None, None).await.unwrap() {
             let Ok(tag) = tag else {
                 continue;
             };
@@ -1465,14 +1459,10 @@ impl<S: Store> TheMan<S> {
 impl<S: Store> ProtocolHandler for TheMan<S> {
     fn accept(
         &self,
-        connecting: iroh::endpoint::Connecting,
+        connection: iroh::endpoint::Connection,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>> {
         let inner = self.inner.clone();
         Box::pin(async move {
-            trace!("Incomming connection..");
-            let connection = connecting
-                .await
-                .inspect_err(|err| error!("Connect Fail: {err}"))?;
             let bi = connection
                 .accept_bi()
                 .await
