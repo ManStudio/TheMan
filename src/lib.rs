@@ -55,6 +55,8 @@ enum ServiceRequest {
     Outputs(Hash, NodeId, OSender<Vec<u32>>),
 
     AddInput(Hash, Hash, u16, OSender<u32>),
+    DirectAddInput(Hash, OSender<u32>),
+
     StopInput(Hash, u32),
 
     GetInputStream(Hash, u32, OSender<usize>),
@@ -235,6 +237,10 @@ impl TheManService {
     }
 
     pub async fn run(mut self) {
+        let (stream_sender, mut stream_receiver) = channel();
+
+        self.protocol.add_stream_sender(stream_sender).await;
+
         loop {
             let message_receiver = {
                 let mut i = 0;
@@ -289,6 +295,10 @@ impl TheManService {
                 }
                 Some(request) = self.receiver.recv() => {
                     self.handle_request(request).await;
+                }
+                Some((node_id, stream_event)) = stream_receiver.recv() => {
+                    self.handle_stream_event(node_id, stream_event).await;
+                    // info!("Stream Event: {stream_event:?}");
                 }
             }
         }
@@ -525,20 +535,6 @@ impl TheManService {
                     .ticket;
                 conversation.set_last(last);
 
-                conversation
-                    .send(
-                        format!(
-                            "{}",
-                            Command::Auto(CommandAuto::Start {
-                                idx: 0,
-                                codec_name: "opus".into(),
-                                codec_settings: BTreeMap::default()
-                            })
-                        ),
-                        0,
-                    )
-                    .await;
-
                 let codec = self
                     .audio_codecs
                     .iter()
@@ -556,6 +552,20 @@ impl TheManService {
                 let active = self.conversations.entry(conversation_id).or_default();
                 let idx = active.next_idx;
                 active.next_idx += 1;
+
+                conversation
+                    .send(
+                        format!(
+                            "{}",
+                            Command::Auto(CommandAuto::Start {
+                                idx: 0,
+                                codec_name: "opus".into(),
+                                codec_settings: BTreeMap::default()
+                            })
+                        ),
+                        0,
+                    )
+                    .await;
 
                 let stream = StreamIN {
                     name: format!(
@@ -637,6 +647,94 @@ impl TheManService {
                 _ = result_sender.send(idx);
             }
 
+            ServiceRequest::DirectAddInput(conversation_id, result_sender) => {
+                let codec = self
+                    .audio_codecs
+                    .iter()
+                    .find(|codec| codec.name() == "opus")
+                    .expect("Cannot get opus codec");
+                let encoder_settings = codec
+                    .default_encoder_settings(media_man::SampleFormat::F32, 48000, 1)
+                    .unwrap();
+                let mut encoder = codec.create_encoder(encoder_settings).unwrap();
+
+                let (sender, mut receiver) = channel::<f32>();
+
+                let protocol = self.protocol.clone();
+
+                let active = self.conversations.entry(conversation_id).or_default();
+                let idx = active.next_idx;
+                active.next_idx += 1;
+
+                protocol
+                    .send_stream(protocol::StreamEvent::Start {
+                        conversation_id,
+                        idx,
+                        codec: String::from("opus"),
+                        settings: String::default(),
+                    })
+                    .await;
+
+                let stream = StreamIN {
+                    name: format!(
+                        "opus encoder and sender for: {}-{idx}",
+                        base64_serialize(&conversation_id).unwrap()
+                    ),
+                    task: Box::pin(async move {
+                        struct DropConversation(ProtocolTheMan<Store>, Hash, u32);
+
+                        impl Drop for DropConversation {
+                            fn drop(&mut self) {
+                                info!("DropConversation");
+                                tokio::task::block_in_place(|| {
+                                    tokio::runtime::Handle::current().block_on(async {
+                                        self.0
+                                            .send_stream(protocol::StreamEvent::Stop {
+                                                conversation_id: self.1,
+                                                idx: self.2,
+                                            })
+                                            .await;
+                                    });
+                                });
+                            }
+                        }
+
+                        let conversation = DropConversation(protocol.clone(), conversation_id, idx);
+
+                        loop {
+                            let Some(sample) = receiver.recv().await else {
+                                continue;
+                            };
+
+                            if let Err(err) =
+                                encoder.encode(&[&media_man::FrameAudio::f32_new(vec![sample])])
+                            {
+                                error!("opus encode: {err:?}");
+                                continue;
+                            }
+
+                            while let Some(packet) = encoder.get_packet() {
+                                protocol
+                                    .send_stream(protocol::StreamEvent::Play {
+                                        conversation_id: conversation.1,
+                                        idx: conversation.2,
+                                        data: Arc::from(packet.data),
+                                    })
+                                    .await;
+                            }
+                        }
+                    }),
+                    sender,
+                };
+
+                let id = self.add_input_stream(stream);
+                let active = self.conversations.entry(conversation_id).or_default();
+                active.inputs.insert(0, id);
+                if result_sender.send(idx).is_err() {
+                    warn!("Cannot respond");
+                }
+            }
+
             ServiceRequest::StopInput(conversation_id, idx) => {
                 let active = self.conversations.entry(conversation_id).or_default();
                 let Some(stream) = active.inputs.remove(&idx) else {
@@ -689,6 +787,119 @@ impl TheManService {
 
                 if let Some(to_remove) = connections.iter().position(|id| *id == from_id) {
                     connections.swap_remove(to_remove);
+                }
+            }
+        }
+    }
+
+    async fn handle_stream_event(&mut self, node_id: NodeId, stream_event: protocol::StreamEvent) {
+        match stream_event {
+            protocol::StreamEvent::Start {
+                conversation_id,
+                idx,
+                codec: codec_name,
+                settings,
+            } => {
+                for audio_codec in self.audio_codecs.iter() {
+                    if audio_codec.name() != *codec_name {
+                        continue;
+                    }
+
+                    let (psender, mut preceiver) =
+                        tokio::sync::mpsc::channel::<media_man::Packet>(16);
+
+                    let stream = {
+                        let decoder_settings = audio_codec
+                            .default_decoder_settings(media_man::SampleFormat::F32, 48000, 1)
+                            .unwrap();
+                        let mut decoder = audio_codec.create_decoder(decoder_settings).unwrap();
+                        let (sender, receiver) = channel::<f32>();
+
+                        StreamOUT {
+                            name: format!(
+                                "opus decoder and direct receiver for {}-{}-{idx}",
+                                base64_serialize(&conversation_id).unwrap(),
+                                base64_serialize(&node_id).unwrap()
+                            ),
+                            task: Box::pin(async move {
+                                loop {
+                                    let Some(packet) = preceiver.recv().await else {
+                                        continue;
+                                    };
+
+                                    match decoder.decode(packet) {
+                                        Ok(mut frames) => {
+                                            for sample in frames.remove(0).to_f32() {
+                                                _ = sender.send(sample);
+                                            }
+                                        }
+                                        Err(err) => {
+                                            error!("{err:?} when decoding for {idx}");
+                                        }
+                                    }
+                                }
+                            }),
+                            receiver,
+                        }
+                    };
+
+                    let id = self.add_output_stream(stream);
+
+                    let conversation = self.conversations.entry(conversation_id).or_default();
+                    let output = conversation.outputs.entry(node_id).or_default();
+
+                    output.insert(idx, (psender, id));
+                    break;
+                }
+            }
+            protocol::StreamEvent::Play {
+                conversation_id,
+                idx,
+                data,
+            } => {
+                let Some(conversation) = self.conversations.get_mut(&conversation_id) else {
+                    error!("Play before start???");
+                    return;
+                };
+
+                let Some(output) = conversation.outputs.get_mut(&node_id) else {
+                    error!("Play before start???");
+                    return;
+                };
+
+                let Some(output_stream) = output.get_mut(&idx) else {
+                    error!("Play before start???");
+                    return;
+                };
+
+                if output_stream
+                    .0
+                    .try_send(media_man::Packet {
+                        data: data.to_vec(),
+                    })
+                    .is_err()
+                {
+                    if let Some((_, id)) = output.remove(&idx) {
+                        self.out_streams.remove(&id);
+                    }
+                }
+            }
+            protocol::StreamEvent::Stop {
+                conversation_id,
+                idx,
+            } => {
+                let Some(conversation) = self.conversations.get_mut(&conversation_id) else {
+                    error!("Stop before start???");
+                    return;
+                };
+
+                let Some(output) = conversation.outputs.get_mut(&node_id) else {
+                    error!("Stop before start???");
+                    return;
+                };
+
+                if let Some((_, id)) = output.remove(&idx) {
+                    self.out_streams.remove(&id);
                 }
             }
         }
@@ -847,6 +1058,17 @@ impl TheMan {
                 ttl,
                 sender,
             ))
+            .await
+            .unwrap();
+
+        receiver.await.unwrap()
+    }
+
+    pub async fn conversation_direct_create_input(&self, conversation_id: Hash) -> u32 {
+        let (sender, receiver) = ochannel();
+
+        self.sender
+            .send(ServiceRequest::DirectAddInput(conversation_id, sender))
             .await
             .unwrap();
 

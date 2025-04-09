@@ -13,15 +13,30 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "The Man.md",
+                "file": "The Man Message Protocol.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "The Man"
+              "title": "The Man Message Protocol"
+            }
+          },
+          {
+            "id": "c37ed03e01819b02",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "The Man Direct Protocol.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "The Man Direct Protocol"
             }
           }
-        ]
+        ],
+        "currentTab": 1
       }
     ],
     "direction": "vertical"
@@ -157,11 +172,12 @@
       "command-palette:Open command palette": false
     }
   },
-  "active": "4158319fb16a47bf",
+  "active": "c37ed03e01819b02",
   "lastOpenFiles": [
+    "The Man Message Protocol.md",
+    "The Man Direct Protocol.md",
     "The Man V1.md",
     "The Man.md",
-    "The Man Message Protocol.md",
     "Ticket.md",
     "Composite.md",
     "ziglang.org.md",

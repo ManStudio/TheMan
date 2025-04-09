@@ -274,6 +274,16 @@ impl Pane for PaneConversation {
                             }));
                         }
 
+                        if ui.button("Create Direct Input").clicked(){
+                            let the_man = the_man.clone();
+                            let conversation_id = *conversation_id;
+                            context.add_task(Box::pin(async move {
+                                the_man
+                                    .conversation_direct_create_input(conversation_id )
+                                    .await;
+                            }));
+                        }
+
                         egui::ScrollArea::vertical()
                             .max_width(scroll_width)
                             .id_salt("IN")

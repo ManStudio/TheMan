@@ -1,6 +1,7 @@
 The chat or the [[Conversation]] will be the basis.
 
 We use [[The Man Message Protocol]] for the messages.
+We use [[The Man Direct Protocol]] for real time conversations.   
 ## Commands
 Commands are messages that starts with slash.
 

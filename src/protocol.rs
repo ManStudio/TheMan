@@ -19,10 +19,10 @@ use iroh_blobs::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::{
     Mutex, RwLock,
-    mpsc::{Receiver, Sender},
+    mpsc::{Receiver, Sender, UnboundedSender},
     oneshot, watch,
 };
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 pub type Time = chrono::DateTime<chrono::Utc>;
 
@@ -214,6 +214,64 @@ pub struct Message {
 pub enum Packet {
     Welcome,
     SendMessage(Ticket),
+    StartStream {
+        conversation_id: Hash,
+        idx: u32,
+        codec: String,
+        settings: String,
+    },
+    PlayStream {
+        conversation_id: Hash,
+        idx: u32,
+        data: Vec<u8>,
+    },
+    StopStream {
+        conversation_id: Hash,
+        idx: u32,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    Start {
+        conversation_id: Hash,
+        idx: u32,
+        codec: String,
+        settings: String,
+    },
+    Play {
+        conversation_id: Hash,
+        idx: u32,
+        data: Arc<[u8]>,
+    },
+    Stop {
+        conversation_id: Hash,
+        idx: u32,
+    },
+}
+
+impl StreamEvent {
+    pub fn conversation_id(&self) -> Hash {
+        match self {
+            StreamEvent::Start {
+                conversation_id, ..
+            }
+            | StreamEvent::Play {
+                conversation_id, ..
+            }
+            | StreamEvent::Stop {
+                conversation_id, ..
+            } => *conversation_id,
+        }
+    }
+
+    pub fn idx(&self) -> u32 {
+        match self {
+            StreamEvent::Start { idx, .. }
+            | StreamEvent::Play { idx, .. }
+            | StreamEvent::Stop { idx, .. } => *idx,
+        }
+    }
 }
 
 pub enum LazyData {
@@ -278,6 +336,9 @@ enum ServiceRequest {
     Store(Vec<u8>, u16, oneshot::Sender<Ticket>),
 
     SetTTL(TicketFor, Hash, u16),
+
+    AddStreamSender(UnboundedSender<(NodeId, StreamEvent)>),
+    SendStream(StreamEvent),
 }
 
 #[allow(dead_code)]
@@ -308,6 +369,8 @@ struct TheManService<S: Store> {
     tickets_to_delete: BTreeMap<Hash, TicketFor>,
 
     every_second: tokio::time::Interval,
+
+    stream_senders: Vec<UnboundedSender<(NodeId, StreamEvent)>>,
 }
 
 impl<S: Store> TheManService<S> {
@@ -654,6 +717,7 @@ impl<S: Store> TheManService<S> {
                     },
                 );
             }
+
             ServiceRequest::Create(raw_conversation, sender) => {
                 let bytes =
                     bincode::serde::encode_to_vec(&raw_conversation, bincode::config::legacy())
@@ -712,6 +776,7 @@ impl<S: Store> TheManService<S> {
                 }
                 _ = self.message_sender.send(None);
             }
+
             ServiceRequest::List(sender) => {
                 let Ok(_) = sender.send(self.conversations.keys().copied().collect::<Vec<_>>())
                 else {
@@ -719,6 +784,7 @@ impl<S: Store> TheManService<S> {
                     return;
                 };
             }
+
             ServiceRequest::GetMessage(hash, sender) => {
                 let Some(message) = self.messages.get(&hash) else {
                     if sender.send(None).is_err() {
@@ -732,6 +798,7 @@ impl<S: Store> TheManService<S> {
                     return;
                 };
             }
+
             ServiceRequest::GetConversation(hash, sender) => {
                 let Some(conversations) = self.conversations.get(&hash) else {
                     if sender.send(None).is_err() {
@@ -745,6 +812,7 @@ impl<S: Store> TheManService<S> {
                     return;
                 };
             }
+
             ServiceRequest::Send(raw_message, ttl, sender) => {
                 let Some(conversation) =
                     self.conversations.get_mut(&raw_message.conversation.hash())
@@ -827,8 +895,10 @@ impl<S: Store> TheManService<S> {
                 let mut buffer = Vec::default();
                 ciborium::into_writer(&Packet::SendMessage(ticket), &mut buffer).unwrap();
 
+                let self_node_id = self.endpoint.node_id();
+
                 for node_id in conversation.raw.nodes.iter() {
-                    if *node_id == self.endpoint.node_id() {
+                    if *node_id == self_node_id {
                         continue;
                     }
 
@@ -844,14 +914,17 @@ impl<S: Store> TheManService<S> {
                     }
                 }
             }
+
             ServiceRequest::Recover(ticket) => {
                 messages_to_add.push(ticket);
             }
+
             ServiceRequest::RequestMessageSubscription(sender) => {
                 if let Err(err) = sender.send(self.message_sender.subscribe()) {
                     error!("Cannot send subscription receiver! {err:?}");
                 }
             }
+
             ServiceRequest::Get(ticket, sender) => {
                 if let Some(data) = self.datas.get_mut(&ticket.hash()) {
                     _ = sender.send(data.get(&self.blobs).await);
@@ -872,6 +945,7 @@ impl<S: Store> TheManService<S> {
                     _ = sender.send(None);
                 }
             }
+
             ServiceRequest::Store(data, ttl, sender) => {
                 let arc: Arc<[u8]> = data.clone().into();
                 let res = self
@@ -951,6 +1025,73 @@ impl<S: Store> TheManService<S> {
                     }
                 }
             }
+
+            ServiceRequest::AddStreamSender(sender) => {
+                self.stream_senders.retain(|s| !s.is_closed());
+
+                self.stream_senders.push(sender);
+            }
+
+            ServiceRequest::SendStream(event) => {
+                let Some(conversation) = self.conversations.get(&event.conversation_id()) else {
+                    error!(
+                        "Cannot find conversation to send stream event: {}",
+                        base64_serialize(&event.conversation_id()).unwrap()
+                    );
+                    return;
+                };
+
+                let packet = match event {
+                    StreamEvent::Start {
+                        conversation_id,
+                        idx,
+                        codec,
+                        settings,
+                    } => Packet::StartStream {
+                        conversation_id,
+                        idx,
+                        codec,
+                        settings,
+                    },
+                    StreamEvent::Play {
+                        conversation_id,
+                        idx,
+                        data,
+                    } => Packet::PlayStream {
+                        conversation_id,
+                        idx,
+                        data: data.to_vec(),
+                    },
+                    StreamEvent::Stop {
+                        conversation_id,
+                        idx,
+                    } => Packet::StopStream {
+                        conversation_id,
+                        idx,
+                    },
+                };
+
+                let mut buffer = Vec::default();
+                if let Err(err) = ciborium::into_writer(&packet, &mut buffer) {
+                    error!("Cannot encode packet: {err}");
+                    return;
+                }
+
+                let self_node_id = self.endpoint.node_id();
+
+                for node_id in conversation.raw.nodes.iter() {
+                    if *node_id == self_node_id {
+                        continue;
+                    }
+
+                    let Some(conn) = self.connections.get_mut(node_id) else {
+                        warn!("Is not connected to {}", base64_serialize(node_id).unwrap());
+                        continue;
+                    };
+
+                    conn.sender.write_all(&buffer).await;
+                }
+            }
         }
     }
 
@@ -1007,6 +1148,65 @@ impl<S: Store> TheManService<S> {
                     base64_serialize(&node_id).unwrap()
                 );
                 messages_to_add.push(ticket);
+            }
+
+            Packet::StartStream {
+                conversation_id: conversation_hash,
+                idx,
+                codec,
+                settings,
+            } => {
+                self.stream_senders.retain(|s| !s.is_closed());
+
+                for sender in self.stream_senders.iter_mut() {
+                    _ = sender.send((
+                        node_id,
+                        StreamEvent::Start {
+                            conversation_id: conversation_hash,
+                            idx,
+                            codec: codec.clone(),
+                            settings: settings.clone(),
+                        },
+                    ));
+                }
+            }
+
+            Packet::PlayStream {
+                conversation_id: conversation_hash,
+                idx,
+                data,
+            } => {
+                self.stream_senders.retain(|s| !s.is_closed());
+
+                let data = Arc::<[u8]>::from(data);
+
+                for sender in self.stream_senders.iter_mut() {
+                    _ = sender.send((
+                        node_id,
+                        StreamEvent::Play {
+                            conversation_id: conversation_hash,
+                            idx,
+                            data: data.clone(),
+                        },
+                    ));
+                }
+            }
+
+            Packet::StopStream {
+                conversation_id: conversation_hash,
+                idx,
+            } => {
+                self.stream_senders.retain(|s| !s.is_closed());
+
+                for sender in self.stream_senders.iter_mut() {
+                    _ = sender.send((
+                        node_id,
+                        StreamEvent::Stop {
+                            conversation_id: conversation_hash,
+                            idx,
+                        },
+                    ));
+                }
             }
         }
     }
@@ -1312,6 +1512,7 @@ impl<S: Store> TheMan<S> {
                     tickets_to_delete: Default::default(),
                     every_second: tokio::time::interval(tokio::time::Duration::from_secs(1)),
                     dead_messages: Default::default(),
+                    stream_senders: Default::default(),
                 }
                 .run()
                 .await;
@@ -1452,6 +1653,18 @@ impl<S: Store> TheMan<S> {
     pub async fn message_set_ttl(&self, hash: Hash, ttl: u16) {
         self.inner
             .send_request(ServiceRequest::SetTTL(TicketFor::Message, hash, ttl))
+            .await;
+    }
+
+    pub async fn add_stream_sender(&self, sender: UnboundedSender<(NodeId, StreamEvent)>) {
+        self.inner
+            .send_request(ServiceRequest::AddStreamSender(sender))
+            .await;
+    }
+
+    pub async fn send_stream(&self, event: StreamEvent) {
+        self.inner
+            .send_request(ServiceRequest::SendStream(event))
             .await;
     }
 }
