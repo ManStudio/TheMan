@@ -476,7 +476,9 @@ pub struct CodecAudioOpus {
 
 impl CodecAudioOpus {
     pub fn new() -> Option<Self> {
-        let lib = unsafe { sys::OpusLibSys::new() }?;
+        let lib = unsafe { sys::OpusLibSys::new() }
+            .inspect_err(|err| eprintln!("{err}"))
+            .ok()?;
 
         Some(Self {
             library: Arc::new(lib),

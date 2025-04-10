@@ -1,3 +1,5 @@
+use lib_kman::libloading;
+use lib_kman::make_lib;
 use libloading::Library;
 use libloading::Symbol;
 
@@ -90,62 +92,29 @@ unsafe impl Sync for OpusEncoder {}
 unsafe impl Send for OpusDecoder {}
 unsafe impl Sync for OpusDecoder {}
 
-pub struct OpusLibSys {
-    library: Box<Library>,
+make_lib! {
+    pub struct OpusLibSys{
+        opus_encoder_get_size: extern "C" fn(i32) -> i32;
+        opus_encoder_init: extern "C" fn(*mut RawOpusEncoder, i32, i32, i32) -> i32;
+        opus_encode: extern "C" fn(*mut RawOpusEncoder, *const i16, i32, *mut u8, i32) -> i32;
+        opus_encode_float: extern "C" fn(*mut RawOpusEncoder, *const f32, i32, *mut u8, i32) -> i32;
+        opus_encoder_destroy: extern "C" fn(*mut RawOpusEncoder);
+        opus_encoder_ctl: extern "C" fn(*mut RawOpusEncoder, i32, ...) -> i32;
 
-    fn_opus_encoder_get_size: Symbol<'static, extern "C" fn(i32) -> i32>,
-    fn_opus_encoder_init: Symbol<'static, extern "C" fn(*mut RawOpusEncoder, i32, i32, i32) -> i32>,
-    fn_opus_encode:
-        Symbol<'static, extern "C" fn(*mut RawOpusEncoder, *const i16, i32, *mut u8, i32) -> i32>,
-    fn_opus_encode_float:
-        Symbol<'static, extern "C" fn(*mut RawOpusEncoder, *const f32, i32, *mut u8, i32) -> i32>,
-    fn_opus_encoder_destroy: Symbol<'static, extern "C" fn(*mut RawOpusEncoder)>,
-    fn_opus_encoder_ctl: Symbol<'static, extern "C" fn(*mut RawOpusEncoder, i32, ...) -> i32>,
-
-    fn_opus_decoder_get_size: Symbol<'static, extern "C" fn(i32) -> i32>,
-    fn_opus_decoder_init: Symbol<'static, extern "C" fn(*mut RawOpusDecoder, i32, i32) -> i32>,
-    fn_opus_decode: Symbol<
-        'static,
-        extern "C" fn(*mut RawOpusDecoder, *const u8, i32, *mut i16, i32, i32) -> i32,
-    >,
-    fn_opus_decode_float: Symbol<
-        'static,
-        extern "C" fn(*mut RawOpusDecoder, *const u8, i32, *mut f32, i32, i32) -> i32,
-    >,
-    fn_opus_decoder_ctl:
-        Symbol<'static, extern "C" fn(*mut RawOpusDecoder, request: i32, ...) -> i32>,
-    fn_opus_decoder_destroy: Symbol<'static, extern "C" fn(*mut RawOpusDecoder)>,
+        opus_decoder_get_size: extern "C" fn(i32) -> i32;
+        opus_decoder_init: extern "C" fn (*mut RawOpusDecoder, i32, i32) -> i32;
+        opus_decode: extern "C" fn(*mut RawOpusDecoder, *const u8, i32, *mut i16, i32, i32) -> i32;
+        opus_decode_float: extern "C" fn(*mut RawOpusDecoder, *const u8, i32, *mut f32, i32, i32) -> i32;
+        opus_decoder_destroy: extern "C" fn(*mut RawOpusDecoder);
+        opus_decoder_ctl: extern "C" fn(*mut RawOpusDecoder, i32, ...) -> i32;
+    }
 }
 
 impl OpusLibSys {
-    pub unsafe fn new() -> Option<Self> {
-        let Ok(library) = Library::new(libloading::library_filename("opus")) else {
-            return None;
-        };
-        Self::with_library(library)
-    }
-
-    pub unsafe fn with_library(library: Library) -> Option<Self> {
-        let library = Box::new(library);
-
-        let lib: &'static libloading::Library = &*(&*library as *const _);
-
-        Some(Self {
-            fn_opus_encoder_get_size: lib.get(b"opus_encoder_get_size\0").ok()?,
-            fn_opus_encoder_init: lib.get(b"opus_encoder_init\0").ok()?,
-            fn_opus_encode: lib.get(b"opus_encode\0").ok()?,
-            fn_opus_encode_float: lib.get(b"opus_encode_float\0").ok()?,
-            fn_opus_encoder_destroy: lib.get(b"opus_encoder_destroy\0").ok()?,
-            fn_opus_encoder_ctl: lib.get(b"opus_encoder_ctl\0").ok()?,
-
-            fn_opus_decoder_get_size: lib.get(b"opus_decoder_get_size\0").ok()?,
-            fn_opus_decoder_init: lib.get(b"opus_decoder_init\0").ok()?,
-            fn_opus_decode: lib.get(b"opus_decode\0").ok()?,
-            fn_opus_decode_float: lib.get(b"opus_decode_float\0").ok()?,
-            fn_opus_decoder_ctl: lib.get(b"opus_decoder_ctl\0").ok()?,
-            fn_opus_decoder_destroy: lib.get(b"opus_decoder_destroy\0").ok()?,
-            library,
-        })
+    pub unsafe fn new() -> Result<Self, libloading::Error> {
+        Self::with_library(Library::new(lib_kman::libloading::library_filename(
+            "opus",
+        ))?)
     }
 
     /** Gets the size of an <code>OpusEncoder</code> structure.
@@ -154,7 +123,7 @@ impl OpusLibSys {
      * @returns The size in bytes.
      */
     pub unsafe fn opus_encoder_get_size(&self, channels: i32) -> i32 {
-        (self.fn_opus_encoder_get_size)(channels)
+        (self._opus_encoder_get_size)(channels)
     }
 
     /** Allocates and initializes an encoder state.
@@ -196,10 +165,10 @@ impl OpusLibSys {
         application: i32,
         error: *mut i32,
     ) -> OpusEncoder {
-        let size = (self.fn_opus_encoder_get_size)(channels) as usize;
+        let size = (self._opus_encoder_get_size)(channels) as usize;
         let encoder = std::alloc::alloc(std::alloc::Layout::from_size_align(size, 8).unwrap())
             as *mut RawOpusEncoder;
-        *error = (self.fn_opus_encoder_init)(encoder, fs, channels, application);
+        *error = (self._opus_encoder_init)(encoder, fs, channels, application);
         OpusEncoder(encoder)
     }
 
@@ -223,7 +192,7 @@ impl OpusLibSys {
         channels: i32,
         application: i32,
     ) -> i32 {
-        (self.fn_opus_encoder_init)(st.0, fs, channels, application)
+        (self._opus_encoder_init)(st.0, fs, channels, application)
     }
 
     /** Encodes an Opus frame.
@@ -262,7 +231,7 @@ impl OpusLibSys {
         data: *mut u8,
         max_data_bytes: i32,
     ) -> i32 {
-        (self.fn_opus_encode)(st.0, pcm, frame_size, data, max_data_bytes)
+        (self._opus_encode)(st.0, pcm, frame_size, data, max_data_bytes)
     }
 
     /** Encodes an Opus frame from floating point input.
@@ -306,15 +275,15 @@ impl OpusLibSys {
         data: *mut u8,
         max_data_bytes: i32,
     ) -> i32 {
-        (self.fn_opus_encode_float)(st.0, pcm, frame_size, data, max_data_bytes)
+        (self._opus_encode_float)(st.0, pcm, frame_size, data, max_data_bytes)
     }
 
     pub unsafe fn opus_encoder_set_bitrate(&self, st: &mut OpusEncoder, bitrate: i32) {
-        (self.fn_opus_encoder_ctl)(st.0, OPUS_SET_BITRATE_REQUEST, bitrate);
+        (self._opus_encoder_ctl)(st.0, OPUS_SET_BITRATE_REQUEST, bitrate);
     }
 
     pub unsafe fn opus_encoder_set_application(&self, st: &mut OpusEncoder, application: i32) {
-        (self.fn_opus_encoder_ctl)(st.0, OPUS_SET_APPLICATION_REQUEST, application);
+        (self._opus_encoder_ctl)(st.0, OPUS_SET_APPLICATION_REQUEST, application);
     }
 
     /// frame_size needs to be: OPUS_FRAMESIZE
@@ -323,14 +292,14 @@ impl OpusLibSys {
         st: &mut OpusEncoder,
         frame_size: i32,
     ) {
-        (self.fn_opus_encoder_ctl)(st.0, OPUS_SET_EXPERT_FRAME_DURATION_REQUEST, frame_size);
+        (self._opus_encoder_ctl)(st.0, OPUS_SET_EXPERT_FRAME_DURATION_REQUEST, frame_size);
     }
 
     /** Frees an <code>OpusEncoder</code> allocated by opus_encoder_create().
      * @param[in] st <tt>OpusEncoder*</tt>: State to be freed.
      */
     pub unsafe fn opus_encoder_destroy(&self, st: &mut OpusEncoder) {
-        (self.fn_opus_encoder_destroy)(st.0);
+        (self._opus_encoder_destroy)(st.0);
         st.0 = std::ptr::null_mut();
     }
 
@@ -355,10 +324,10 @@ impl OpusLibSys {
         channels: i32,
         error: *mut i32,
     ) -> OpusDecoder {
-        let size = (self.fn_opus_decoder_get_size)(channels) as usize;
+        let size = (self._opus_decoder_get_size)(channels) as usize;
         let decoder = std::alloc::alloc(std::alloc::Layout::from_size_align(size, 8).unwrap())
             as *mut RawOpusDecoder;
-        *error = (self.fn_opus_decoder_init)(decoder, fs, channels);
+        *error = (self._opus_decoder_init)(decoder, fs, channels);
         OpusDecoder(decoder)
     }
 
@@ -387,7 +356,7 @@ impl OpusLibSys {
         frame_size: i32,
         decode_fec: i32,
     ) -> i32 {
-        (self.fn_opus_decode)(st.0, data, len, pcm, frame_size, decode_fec)
+        (self._opus_decode)(st.0, data, len, pcm, frame_size, decode_fec)
     }
 
     /** Decode an Opus packet with floating point output.
@@ -415,11 +384,11 @@ impl OpusLibSys {
         frame_size: i32,
         decode_fec: i32,
     ) -> i32 {
-        (self.fn_opus_decode_float)(st.0, data, len, pcm, frame_size, decode_fec)
+        (self._opus_decode_float)(st.0, data, len, pcm, frame_size, decode_fec)
     }
 
     pub unsafe fn opus_decoder_destroy(&self, st: &mut OpusDecoder) {
-        (self.fn_opus_decoder_destroy)(st.0);
+        (self._opus_decoder_destroy)(st.0);
         st.0 = std::ptr::null_mut();
     }
 }
