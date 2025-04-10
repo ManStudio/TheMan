@@ -1,0 +1,7 @@
+[package]
+name = "pipewire-sys-kman"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lib-kman = {path = "../lib-kman"}
