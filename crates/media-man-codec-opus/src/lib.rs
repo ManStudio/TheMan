@@ -60,6 +60,12 @@ impl TSettings for OpusEncoderSettings {
                     + ValueInfo::new_with("100ms", "", 5008u32)
             }
             1 => ValueInfo::new_with("Bit Rate", "", 64000u32),
+            2 => {
+                ValueInfo::new_with("Application", "", 2049i32)
+                    + ValueInfo::new_with("VOIP", "", 2048i32)
+                    + ValueInfo::new_with("AUDIO", "", 2049i32)
+                    + ValueInfo::new_with("Restricted Lowdelay", "", 2051i32)
+            }
             _ => return None,
         })
     }
@@ -78,15 +84,17 @@ impl TSettings for OpusEncoderSettings {
         match idx {
             0 => self.framesize = value.try_into().unwrap(),
             1 => self.bit_rate = value.try_into().unwrap(),
+            2 => self.application = value.try_into().unwrap(),
             _ => return Err(SettingsError::InvalidSettingIndex),
         }
         Ok(())
     }
 
-    fn get_setting(&mut self, idx: usize) -> Result<Value, media_man_core::SettingsError> {
+    fn get_setting(&self, idx: usize) -> Result<Value, media_man_core::SettingsError> {
         Ok(match idx {
             0 => self.framesize.into(),
             1 => self.bit_rate.into(),
+            2 => self.application.into(),
             _ => return Err(SettingsError::InvalidSettingIndex),
         })
     }
@@ -111,7 +119,7 @@ impl TSettings for OpusDecoderSettings {
         Err(SettingsError::InvalidSettingIndex)
     }
 
-    fn get_setting(&mut self, _idx: usize) -> Result<Value, SettingsError> {
+    fn get_setting(&self, _idx: usize) -> Result<Value, SettingsError> {
         Err(SettingsError::InvalidSettingIndex)
     }
 }
@@ -170,17 +178,28 @@ impl TSettings for EncoderAudioOpus {
     fn set_setting(&mut self, idx: usize, value: Value) -> Result<(), SettingsError> {
         self.settings.set_setting(idx, value)?;
         unsafe {
-            self.library
-                .opus_encoder_set_bitrate(&mut self.encoder, self.settings.bit_rate as i32);
-            self.library.opus_encoder_set_expect_frame_duration(
-                &mut self.encoder,
-                self.settings.framesize as i32,
-            );
+            match idx {
+                0 => {
+                    self.library.opus_encoder_set_expect_frame_duration(
+                        &mut self.encoder,
+                        self.settings.framesize as i32,
+                    );
+                }
+                1 => {
+                    self.library
+                        .opus_encoder_set_bitrate(&mut self.encoder, self.settings.bit_rate as i32);
+                }
+                2 => {
+                    self.library
+                        .opus_encoder_set_application(&mut self.encoder, self.settings.application);
+                }
+                _ => {}
+            }
         }
         Ok(())
     }
 
-    fn get_setting(&mut self, idx: usize) -> Result<Value, SettingsError> {
+    fn get_setting(&self, idx: usize) -> Result<Value, SettingsError> {
         self.settings.get_setting(idx)
     }
 }
@@ -353,7 +372,7 @@ impl TSettings for DecoderAudioOpus {
         Err(SettingsError::InvalidSettingIndex)
     }
 
-    fn get_setting(&mut self, _idx: usize) -> Result<Value, SettingsError> {
+    fn get_setting(&self, _idx: usize) -> Result<Value, SettingsError> {
         Err(SettingsError::InvalidSettingIndex)
     }
 }

@@ -313,6 +313,10 @@ impl OpusLibSys {
         (self.fn_opus_encoder_ctl)(st.0, OPUS_SET_BITRATE_REQUEST, bitrate);
     }
 
+    pub unsafe fn opus_encoder_set_application(&self, st: &mut OpusEncoder, application: i32) {
+        (self.fn_opus_encoder_ctl)(st.0, OPUS_SET_APPLICATION_REQUEST, application);
+    }
+
     /// frame_size needs to be: OPUS_FRAMESIZE
     pub unsafe fn opus_encoder_set_expect_frame_duration(
         &self,

@@ -1,3 +1,5 @@
+use std::{collections::BTreeMap, fmt::Display};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SampleFormat {
@@ -28,6 +30,17 @@ impl Value {
             Value::F32(_) => Type::F32,
             Value::I32(_) => Type::I32,
             Value::U32(_) => Type::U32,
+        }
+    }
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::I16(v) => Display::fmt(v, f),
+            Value::F32(v) => Display::fmt(v, f),
+            Value::I32(v) => Display::fmt(v, f),
+            Value::U32(v) => Display::fmt(v, f),
         }
     }
 }
@@ -156,29 +169,47 @@ impl ValueInfo {
 
         false
     }
+
+    pub fn value_from_str(&self, str: &str) -> Option<Value> {
+        match self.ty {
+            Type::I16 => {
+                if let Ok(v) = str.parse::<i16>() {
+                    return Some(Value::from(v));
+                }
+            }
+            Type::I32 => {
+                if let Ok(v) = str.parse::<i32>() {
+                    return Some(Value::from(v));
+                }
+            }
+            Type::F32 => {
+                if let Ok(v) = str.parse::<f32>() {
+                    return Some(Value::from(v));
+                }
+            }
+            Type::U32 => {
+                if let Ok(v) = str.parse::<u32>() {
+                    return Some(Value::from(v));
+                }
+            }
+        }
+
+        for option in self.options.iter() {
+            if let Some(value) = option.value_from_str(str) {
+                return Some(value);
+            }
+        }
+
+        None
+    }
 }
 
 impl std::ops::Add<ValueInfo> for ValueInfo {
     type Output = Self;
 
-    fn add(self, rhs: Self) -> Self {
-        let Self {
-            name,
-            description,
-            ty,
-            default,
-            mut options,
-        } = self;
-
-        options.push(rhs);
-
-        Self {
-            name,
-            description,
-            ty,
-            default,
-            options,
-        }
+    fn add(mut self, rhs: Self) -> Self {
+        self.options.push(rhs);
+        self
     }
 }
 
@@ -194,9 +225,81 @@ pub enum SettingsError {
 
 pub trait TSettings: std::any::Any + Sync + Send {
     fn get_settings_len(&self) -> usize;
-    fn get_setting_info(&self, idx: usize) -> Option<ValueInfo>;
-    fn set_setting(&mut self, idx: usize, value: Value) -> Result<(), SettingsError>;
-    fn get_setting(&mut self, idx: usize) -> Result<Value, SettingsError>;
+    fn get_setting_info(&self, id: usize) -> Option<ValueInfo>;
+    fn set_setting(&mut self, id: usize, value: Value) -> Result<(), SettingsError>;
+    fn get_setting(&self, id: usize) -> Result<Value, SettingsError>;
+}
+
+pub trait TSettingsExt {
+    fn set(&mut self, name: &str, value: Value) -> Result<(), SettingsError>;
+    fn get(&self, name: &str) -> Result<Value, SettingsError>;
+
+    fn export(&self) -> BTreeMap<String, String>;
+    fn import(&mut self, map: BTreeMap<String, String>);
+}
+
+impl TSettingsExt for Box<dyn TSettings> {
+    fn set(&mut self, name: &str, value: Value) -> Result<(), SettingsError> {
+        for id in 0..self.get_settings_len() {
+            let Some(info) = self.get_setting_info(id) else {
+                continue;
+            };
+
+            if info.name == name {
+                return self.set_setting(id, value);
+            }
+        }
+
+        Err(SettingsError::InvalidSettingIndex)
+    }
+
+    fn get(&self, name: &str) -> Result<Value, SettingsError> {
+        for id in 0..self.get_settings_len() {
+            let Some(info) = self.get_setting_info(id) else {
+                continue;
+            };
+
+            if info.name == name {
+                return self.get_setting(id);
+            }
+        }
+
+        Err(SettingsError::InvalidSettingIndex)
+    }
+
+    fn export(&self) -> BTreeMap<String, String> {
+        let mut out = BTreeMap::default();
+
+        for id in 0..self.get_settings_len() {
+            let Some(info) = self.get_setting_info(id) else {
+                continue;
+            };
+
+            let Ok(value) = self.get_setting(id) else {
+                continue;
+            };
+
+            out.insert(info.name, value.to_string());
+        }
+
+        out
+    }
+
+    fn import(&mut self, map: BTreeMap<String, String>) {
+        for id in 0..self.get_settings_len() {
+            let Some(info) = self.get_setting_info(id) else {
+                continue;
+            };
+
+            let Some(string_value) = map.get(&info.name) else {
+                continue;
+            };
+
+            if let Some(value) = info.value_from_str(string_value) {
+                _ = self.set_setting(id, value);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
