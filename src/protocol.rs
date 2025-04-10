@@ -1089,7 +1089,12 @@ impl<S: Store> TheManService<S> {
                         continue;
                     };
 
-                    conn.sender.write_all(&buffer).await;
+                    if let Err(err) = conn.sender.write_all(&buffer).await {
+                        error!(
+                            "Cannot send to {} {err}",
+                            base64_serialize(node_id).unwrap()
+                        );
+                    }
                 }
             }
         }

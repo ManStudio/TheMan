@@ -643,7 +643,7 @@ impl TheManService {
 
                 let id = self.add_input_stream(stream);
                 let active = self.conversations.entry(conversation_id).or_default();
-                active.inputs.insert(0, id);
+                active.inputs.insert(idx, id);
                 _ = result_sender.send(idx);
             }
 
@@ -685,7 +685,6 @@ impl TheManService {
 
                         impl Drop for DropConversation {
                             fn drop(&mut self) {
-                                info!("DropConversation");
                                 tokio::task::block_in_place(|| {
                                     tokio::runtime::Handle::current().block_on(async {
                                         self.0
@@ -729,7 +728,7 @@ impl TheManService {
 
                 let id = self.add_input_stream(stream);
                 let active = self.conversations.entry(conversation_id).or_default();
-                active.inputs.insert(0, id);
+                active.inputs.insert(idx, id);
                 if result_sender.send(idx).is_err() {
                     warn!("Cannot respond");
                 }
