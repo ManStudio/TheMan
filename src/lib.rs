@@ -1,10 +1,4 @@
-use std::{
-    collections::{BTreeMap, VecDeque},
-    future::Future,
-    pin::Pin,
-    str::FromStr,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, future::Future, pin::Pin, str::FromStr, sync::Arc};
 
 use base64::{Engine as _, prelude::BASE64_URL_SAFE_NO_PAD};
 use iroh::{NodeId, SecretKey, endpoint::RemoteInfo, protocol::Router};
@@ -20,10 +14,10 @@ use tokio::sync::mpsc::{
 use tokio::sync::oneshot::{Receiver as OReceiver, Sender as OSender, channel as ochannel};
 use tracing::{error, info, warn};
 
-use cpal::traits::{DeviceTrait as _, HostTrait as _};
-
 mod command;
 use command::{Command, CommandAuto, CommandData};
+
+mod pipewire;
 
 pub struct StreamIN {
     name: String,
@@ -36,11 +30,6 @@ pub struct StreamOUT {
     task: Pin<Box<dyn Future<Output = ()> + Send>>,
     receiver: Receiver<f32>,
 }
-
-pub struct UnsafeSendSyncWrapper<T>(pub T);
-
-unsafe impl<T> Send for UnsafeSendSyncWrapper<T> {}
-unsafe impl<T> Sync for UnsafeSendSyncWrapper<T> {}
 
 #[derive(Default)]
 pub struct ActiveConversation {
@@ -78,7 +67,9 @@ struct TheManService {
     message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
     receiver: tokio::sync::mpsc::Receiver<ServiceRequest>,
 
-    host: cpal::Host,
+    pipewire_handle: Option<std::thread::JoinHandle<()>>,
+    pipewire_sender: ::pipewire::channel::Sender<pipewire::ToPipeWireEvent>,
+
     audio_codecs: Vec<Box<dyn TCodecAudio>>,
 
     conversations: BTreeMap<Hash, ActiveConversation>,
@@ -96,8 +87,9 @@ impl TheManService {
         message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
         receiver: tokio::sync::mpsc::Receiver<ServiceRequest>,
     ) -> Self {
-        let host = cpal::default_host();
-        info!("Using audio host: {}", host.id().name());
+        let (pipewire_sender, pipewire_receiver) = ::pipewire::channel::channel();
+
+        let pipewire_handle = pipewire::start_pipewire(pipewire_receiver);
 
         let mut audio_codecs = Vec::<Box<dyn TCodecAudio>>::default();
         if let Some(opus) = CodecAudioOpus::new() {
@@ -112,8 +104,11 @@ impl TheManService {
             message_receiver,
             receiver,
 
-            host,
+            pipewire_handle: Some(pipewire_handle),
+            pipewire_sender,
+
             audio_codecs,
+
             conversations: BTreeMap::default(),
 
             next_id: 0,
@@ -128,98 +123,40 @@ impl TheManService {
     }
 
     pub fn add_default_input(&mut self) {
-        if let Some(default_device) = self.host.default_input_device() {
-            let (sender, receiver) = channel::<f32>();
+        let (sender, receiver) = channel::<f32>();
 
-            let Ok(stream) = default_device.build_input_stream(
-                &cpal::StreamConfig {
-                    channels: 1,
-                    sample_rate: cpal::SampleRate(48000),
-                    buffer_size: cpal::BufferSize::Fixed(960),
-                },
-                move |samples: &[f32], _info| {
-                    for sample in samples {
-                        if let Err(err) = sender.send(*sample) {
-                            error!("Default Audio Input cannot send: {err}");
-                        }
-                    }
-                },
-                |err| {
-                    error!("Default Audio Input: {err}");
-                },
-                None,
-            ) else {
-                error!("Found Default Audio Device but cannot open audio stream");
-                return;
-            };
-
-            let stream = UnsafeSendSyncWrapper(stream);
-
-            self.add_output_stream(StreamOUT {
-                name: format!(
-                    "OS Input: {}",
-                    default_device
-                        .name()
-                        .unwrap_or_else(|err| format!("Unknown {err}"))
-                ),
-                task: Box::pin(async move {
-                    let _stream = stream;
-                    std::future::pending().await
-                }),
-                receiver,
-            });
-        } else {
-            warn!("No input device found!");
+        if self
+            .pipewire_sender
+            .send(pipewire::ToPipeWireEvent::CreateInput(sender))
+            .is_err()
+        {
+            error!("Cannot create default_input");
         }
+
+        self.add_output_stream(StreamOUT {
+            name: "OS Input".to_string(),
+            task: Box::pin(std::future::pending()),
+            receiver,
+        });
     }
 
     pub fn add_default_output(&mut self) {
-        if let Some(default_device) = self.host.default_output_device() {
-            let (sender, mut receiver) = channel::<f32>();
+        let (sender, receiver) = channel::<f32>();
 
-            let mut buffer = VecDeque::new();
-            let Ok(stream) = default_device.build_output_stream(
-                &cpal::StreamConfig {
-                    channels: 1,
-                    sample_rate: cpal::SampleRate(48000),
-                    buffer_size: cpal::BufferSize::Fixed(960),
-                },
-                move |samples: &mut [f32], _info| {
-                    while let Ok(sample) = receiver.try_recv() {
-                        buffer.push_back(sample);
-                    }
-
-                    for sample in samples {
-                        *sample = buffer.pop_front().unwrap_or(0.0);
-                    }
-                },
-                |err| {
-                    error!("Default Audio Output: {err}");
-                },
-                None,
-            ) else {
-                error!("Found Default Audio Device but cannot open audio stream");
-                return;
-            };
-
-            let stream = UnsafeSendSyncWrapper(stream);
-
-            self.add_input_stream(StreamIN {
-                name: format!(
-                    "OS Output: {}",
-                    default_device
-                        .name()
-                        .unwrap_or_else(|err| format!("Unknown {err}"))
-                ),
-                task: Box::pin(async move {
-                    let _stream = stream;
-                    std::future::pending().await
-                }),
-                sender,
-            });
-        } else {
-            warn!("No output device found!");
+        if self
+            .pipewire_sender
+            .send(pipewire::ToPipeWireEvent::CreateOutput(receiver))
+            .is_err()
+        {
+            error!("Cannot create default_output ");
+            return;
         }
+
+        self.add_input_stream(StreamIN {
+            name: "OS Output".to_string(),
+            task: Box::pin(std::future::pending()),
+            sender,
+        });
     }
 
     pub fn add_input_stream(&mut self, stream: StreamIN) -> usize {
@@ -900,6 +837,19 @@ impl TheManService {
                 if let Some((_, id)) = output.remove(&idx) {
                     self.out_streams.remove(&id);
                 }
+            }
+        }
+    }
+}
+
+impl Drop for TheManService {
+    fn drop(&mut self) {
+        _ = self
+            .pipewire_sender
+            .send(pipewire::ToPipeWireEvent::Shutdown);
+        if let Some(pipewire_handle) = self.pipewire_handle.take() {
+            if !pipewire_handle.is_finished() {
+                _ = pipewire_handle.join();
             }
         }
     }

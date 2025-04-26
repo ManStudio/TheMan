@@ -20,7 +20,6 @@ bincode = {version = "2", features = ["serde"]}
 bytes = { version = "1.10.0", features = ["serde"] }
 chrono = { version = "0.4.39", features = ["serde"] }
 ciborium = "0.2.2"
-cpal = "0.15.3"
 ed25519 = { version = "2.2.3", features = ["serde", "serde_bytes"] }
 futures-util = "0.3.31"
 iroh = "0.34"
@@ -36,3 +35,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 eframe = {version = "0.31" }
 anyhow = "1"
 egui_tiles = "0.12.0"
+pipewire = "0.8.0"
+zbus = "5.5.0"
+xdg-portal = "0.2.0"
