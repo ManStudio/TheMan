@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use gui_deps::*;
+
 use iroh::NodeId;
 use iroh_blobs::Hash;
 use serde::{Deserialize, Serialize};
@@ -61,6 +63,28 @@ fn main() {
         .build()
         .unwrap();
     let _guard = runtime.enter();
+
+    // runtime.block_on(async move {
+    // let conn = zbus::Connection::session().await.unwrap();
+
+    // let mut screencast_portal =
+    //     xdg_portal::screencast::ScreencastPortal::new("h_TheMan", "s_TheMan", conn.clone())
+    //         .await
+    //         .unwrap();
+
+    // let result = screencast_portal
+    //     .screencast(
+    //         xdg_portal::screencast::ScreencastReq::new()
+    //             .source_type(xdg_portal::common::SourceType::all())
+    //             .multiple(true)
+    //             .cursor_mode(xdg_portal::common::CursorMode::Hidden),
+    //     )
+    //     .await
+    //     .unwrap();
+    // dbg!(&result);
+
+    // });
+
     eframe::run_native(
         "The Man",
         eframe::NativeOptions::default(),

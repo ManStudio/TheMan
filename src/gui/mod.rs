@@ -1,5 +1,7 @@
 use std::{future::Future, pin::Pin};
 
+use gui_deps::*;
+
 use eframe::egui;
 use iroh::SecretKey;
 use iroh_blobs::Hash;

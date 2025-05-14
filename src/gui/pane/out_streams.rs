@@ -1,3 +1,5 @@
+use gui_deps::*;
+
 use std::collections::HashMap;
 
 use super::Pane;
@@ -5,7 +7,9 @@ use super::Pane;
 use eframe::egui;
 
 #[derive(Default)]
-pub struct PaneOutStreams {}
+pub struct PaneOutStreams {
+    texture: Option<egui::TextureHandle>,
+}
 
 impl Pane for PaneOutStreams {
     fn name(&self, account: &crate::Account) -> String {
@@ -19,6 +23,15 @@ impl Pane for PaneOutStreams {
         the_man: &mut the_man::TheMan,
         account: &mut crate::Account,
     ) {
+        if ui.button("Start Screen Capture").clicked() {
+            let the_man = the_man.clone();
+            context.add_task(Box::pin(async move {
+                the_man.screen_share().await;
+            }));
+        }
+
+        ui.separator();
+
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
@@ -37,10 +50,45 @@ impl Pane for PaneOutStreams {
                             .unwrap_or_else(|| String::from("Unknown"));
                         let connections = the_man.output_stream_connections(id).await;
 
+                        let mut frame = None;
+
+                        if let Some((width, height, bytes)) =
+                            the_man.stream_last_video_frame(id).await
+                        {
+                            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                [width as usize, height as usize],
+                                &bytes,
+                            );
+                            let texture = ui.ctx().load_texture(
+                                format!("video_stream: {id}"),
+                                color_image,
+                                egui::TextureOptions::LINEAR,
+                            );
+
+                            frame = Some(texture);
+                        }
+
                         let mut disconnect_from = None;
                         let mut connect_to = None;
 
                         egui::CollapsingHeader::new(format!("{id}-{name}")).show(ui, |ui| {
+                            if let Some(frame) = frame {
+                                egui::CollapsingHeader::new("Video Preview")
+                                    .id_salt(id)
+                                    .show(ui, |ui| {
+                                        let (rect, _) = ui.allocate_exact_size(
+                                            egui::vec2(480., 270.),
+                                            egui::Sense::empty(),
+                                        );
+
+                                        egui::paint_texture_at(
+                                            ui.painter(),
+                                            rect,
+                                            &egui::ImageOptions::default(),
+                                            &egui::load::SizedTexture::from_handle(&frame),
+                                        );
+                                    });
+                            }
                             ui.heading("Connections");
                             for connection in connections.iter() {
                                 if ui

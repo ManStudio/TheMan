@@ -1,3 +1,5 @@
+use gui_deps::*;
+
 use std::sync::Arc;
 
 use iroh_blobs::Hash;
@@ -274,12 +276,22 @@ impl Pane for PaneConversation {
                             }));
                         }
 
-                        if ui.button("Create Direct Input").clicked(){
+                        if ui.button("Create Direct Audio Input").clicked(){
                             let the_man = the_man.clone();
                             let conversation_id = *conversation_id;
                             context.add_task(Box::pin(async move {
                                 the_man
-                                    .conversation_direct_create_input(conversation_id )
+                                    .conversation_direct_create_audio_input(conversation_id )
+                                    .await;
+                            }));
+                        }
+
+                        if ui.button("Create Direct Video Input").clicked(){
+                            let the_man = the_man.clone();
+                            let conversation_id = *conversation_id;
+                            context.add_task(Box::pin(async move {
+                                the_man
+                                    .conversation_direct_create_video_input(conversation_id )
                                     .await;
                             }));
                         }

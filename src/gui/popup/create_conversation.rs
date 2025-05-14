@@ -1,3 +1,5 @@
+use gui_deps::*;
+
 use std::collections::BTreeSet;
 
 use eframe::egui;

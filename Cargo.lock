@@ -275,6 +275,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ashpd"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cbdf310d77fd3aaee6ea2093db7011dc2d35d2eb3481e5607f1f8d942ed99df"
+dependencies = [
+ "enumflags2",
+ "futures-channel",
+ "futures-util",
+ "rand 0.9.0",
+ "serde",
+ "serde_repr",
+ "tokio",
+ "url",
+ "zbus 5.5.0",
+]
+
+[[package]]
 name = "asn1-rs"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2229,6 +2246,32 @@ dependencies = [
  "ff",
  "rand_core 0.6.4",
  "subtle",
+]
+
+[[package]]
+name = "gui-deps"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ashpd",
+ "base64",
+ "bytes",
+ "chrono",
+ "ciborium",
+ "ed25519",
+ "eframe",
+ "egui_tiles",
+ "futures-util",
+ "iroh",
+ "iroh-blobs",
+ "iroh-gossip",
+ "media-man",
+ "rand 0.8.5",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "zbus 5.5.0",
 ]
 
 [[package]]
@@ -6028,29 +6071,10 @@ dependencies = [
 name = "the-man"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "base64",
  "bincode",
- "bytes",
- "chrono",
- "ciborium",
- "ed25519",
- "eframe",
- "egui_tiles",
- "futures-util",
- "iroh",
- "iroh-blobs",
- "iroh-gossip",
- "media-man",
+ "gui-deps",
  "pipewire",
- "rand 0.8.5",
  "serde",
- "thiserror 2.0.12",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "xdg-portal",
- "zbus 5.5.0",
 ]
 
 [[package]]
@@ -7740,18 +7764,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "xdg-portal"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d48e60fc8dbb8af89f36580294dd6edbd88ba6b4878acf502295a26b162c534a"
-dependencies = [
- "bitflags 2.9.0",
- "serde",
- "zbus 5.5.0",
- "zvariant 5.4.0",
-]
-
-[[package]]
 name = "xkbcommon-dl"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8108,6 +8120,7 @@ dependencies = [
  "enumflags2",
  "serde",
  "static_assertions",
+ "url",
  "winnow",
  "zvariant_derive 5.4.0",
  "zvariant_utils 3.2.0",

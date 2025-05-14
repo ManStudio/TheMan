@@ -1,5 +1,8 @@
 use std::{collections::BTreeMap, future::Future, pin::Pin, str::FromStr, sync::Arc};
 
+use gui_deps::*;
+
+use ashpd::desktop::screencast;
 use base64::{Engine as _, prelude::BASE64_URL_SAFE_NO_PAD};
 use iroh::{NodeId, SecretKey, endpoint::RemoteInfo, protocol::Router};
 pub mod protocol;
@@ -8,6 +11,7 @@ type Store = iroh_blobs::store::fs::Store;
 use media_man::{CodecAudioOpus, TCodecAudio};
 use protocol::{ConversationHandle, Message, RawConversation, TheMan as ProtocolTheMan, Ticket};
 use serde::{Serialize, de::DeserializeOwned};
+use tokio::sync::Mutex;
 use tokio::sync::mpsc::{
     UnboundedReceiver as Receiver, UnboundedSender as Sender, unbounded_channel as channel,
 };
@@ -19,16 +23,50 @@ use command::{Command, CommandAuto, CommandData};
 
 mod pipewire;
 
-pub struct StreamIN {
-    name: String,
-    task: Pin<Box<dyn Future<Output = ()> + Send>>,
-    sender: Sender<f32>,
+pub enum StreamIN {
+    Audio {
+        name: String,
+        task: Pin<Box<dyn Future<Output = ()> + Send>>,
+        sender: Sender<f32>,
+    },
+    Video {
+        name: String,
+        task: Pin<Box<dyn Future<Output = ()> + Send>>,
+        sender: Sender<(u32, u32, Arc<[u8]>)>,
+    },
 }
 
-pub struct StreamOUT {
-    name: String,
-    task: Pin<Box<dyn Future<Output = ()> + Send>>,
-    receiver: Receiver<f32>,
+impl StreamIN {
+    pub fn name(&self) -> &String {
+        match self {
+            StreamIN::Audio { name, .. } => name,
+            StreamIN::Video { name, .. } => name,
+        }
+    }
+}
+
+pub enum StreamOUT {
+    Audio {
+        name: String,
+        task: Pin<Box<dyn Future<Output = ()> + Send>>,
+        receiver: Receiver<f32>,
+    },
+
+    Video {
+        name: String,
+        task: Pin<Box<dyn Future<Output = ()> + Send>>,
+        receiver: Receiver<(u32, u32, Arc<[u8]>)>,
+        last_frame: Option<(u32, u32, Arc<[u8]>)>,
+    },
+}
+
+impl StreamOUT {
+    pub fn name(&self) -> &String {
+        match self {
+            StreamOUT::Audio { name, .. } => name,
+            StreamOUT::Video { name, .. } => name,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -43,9 +81,9 @@ enum ServiceRequest {
     Inputs(Hash, OSender<Vec<u32>>),
     Outputs(Hash, NodeId, OSender<Vec<u32>>),
 
-    AddInput(Hash, Hash, u16, OSender<u32>),
-    DirectAddInput(Hash, OSender<u32>),
-
+    AddAudioInput(Hash, Hash, u16, OSender<u32>),
+    DirectAddAudioInput(Hash, OSender<u32>),
+    DirectAddVideoInput(Hash, OSender<u32>),
     StopInput(Hash, u32),
 
     GetInputStream(Hash, u32, OSender<usize>),
@@ -55,10 +93,13 @@ enum ServiceRequest {
     OutputStreams(OSender<Vec<usize>>),
 
     StreamName(usize, OSender<Option<String>>),
+    StreamLastVideoFrame(usize, OSender<Option<(u32, u32, Arc<[u8]>)>>),
 
     OutputStreamConnections(usize, OSender<Vec<usize>>),
     OutputStreamConnect(usize, usize),
     OutputStreamDisconnect(usize, usize),
+
+    AddVideo(i32, u32),
 }
 
 struct TheManService {
@@ -67,7 +108,6 @@ struct TheManService {
     message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
     receiver: tokio::sync::mpsc::Receiver<ServiceRequest>,
 
-    pipewire_handle: Option<std::thread::JoinHandle<()>>,
     pipewire_sender: ::pipewire::channel::Sender<pipewire::ToPipeWireEvent>,
 
     audio_codecs: Vec<Box<dyn TCodecAudio>>,
@@ -78,6 +118,9 @@ struct TheManService {
 
     in_streams: BTreeMap<usize, StreamIN>,
     out_streams: BTreeMap<usize, (StreamOUT, Vec<usize>)>,
+
+    proxy_screenshare: Option<screencast::Screencast<'static>>,
+    session_screenshare: Option<ashpd::desktop::Session<'static, screencast::Screencast<'static>>>,
 }
 
 impl TheManService {
@@ -86,11 +129,8 @@ impl TheManService {
         node_id: NodeId,
         message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
         receiver: tokio::sync::mpsc::Receiver<ServiceRequest>,
+        pipewire_sender: ::pipewire::channel::Sender<pipewire::ToPipeWireEvent>,
     ) -> Self {
-        let (pipewire_sender, pipewire_receiver) = ::pipewire::channel::channel();
-
-        let pipewire_handle = pipewire::start_pipewire(pipewire_receiver);
-
         let mut audio_codecs = Vec::<Box<dyn TCodecAudio>>::default();
         if let Some(opus) = CodecAudioOpus::new() {
             audio_codecs.push(Box::new(opus));
@@ -104,7 +144,6 @@ impl TheManService {
             message_receiver,
             receiver,
 
-            pipewire_handle: Some(pipewire_handle),
             pipewire_sender,
 
             audio_codecs,
@@ -114,6 +153,9 @@ impl TheManService {
             next_id: 0,
             in_streams: BTreeMap::default(),
             out_streams: BTreeMap::default(),
+
+            proxy_screenshare: None,
+            session_screenshare: None,
         }
     }
 
@@ -127,13 +169,13 @@ impl TheManService {
 
         if self
             .pipewire_sender
-            .send(pipewire::ToPipeWireEvent::CreateInput(sender))
+            .send(pipewire::ToPipeWireEvent::CreateInputAuto(0, sender))
             .is_err()
         {
             error!("Cannot create default_input");
         }
 
-        self.add_output_stream(StreamOUT {
+        self.add_output_stream(StreamOUT::Audio {
             name: "OS Input".to_string(),
             task: Box::pin(std::future::pending()),
             receiver,
@@ -145,17 +187,41 @@ impl TheManService {
 
         if self
             .pipewire_sender
-            .send(pipewire::ToPipeWireEvent::CreateOutput(receiver))
+            .send(pipewire::ToPipeWireEvent::CreateOutputAuto(0, receiver))
             .is_err()
         {
             error!("Cannot create default_output ");
             return;
         }
 
-        self.add_input_stream(StreamIN {
+        self.add_input_stream(StreamIN::Audio {
             name: "OS Output".to_string(),
             task: Box::pin(std::future::pending()),
             sender,
+        });
+    }
+
+    pub fn add_video_stream(&mut self, core: i32, id: u32) {
+        let (sender, receiver) = channel::<(u32, u32, Arc<[u8]>)>();
+
+        if self
+            .pipewire_sender
+            .send(pipewire::ToPipeWireEvent::CreateVideoStream(
+                core, id, sender,
+            ))
+            .is_err()
+        {
+            error!("Cannot create vidoe stream for {core} with node id {id}");
+            return;
+        }
+
+        info!("Create video stream");
+
+        self.add_output_stream(StreamOUT::Video {
+            name: format!("OS Video {id}"),
+            task: Box::pin(std::future::pending()),
+            receiver,
+            last_frame: None,
         });
     }
 
@@ -190,44 +256,113 @@ impl TheManService {
 
             let mut tasks = Vec::new();
 
-            let mut receivers = Vec::new();
+            let mut audio_receivers = Vec::new();
+            let mut video_receivers = Vec::new();
 
-            for (_, (out_stream, inputs)) in unsafe {
+            for (id, (out_stream, inputs)) in unsafe {
                 std::mem::transmute::<
                     std::collections::btree_map::IterMut<'_, usize, (StreamOUT, Vec<usize>)>,
                     std::collections::btree_map::IterMut<'static, usize, (StreamOUT, Vec<usize>)>,
                 >(self.out_streams.iter_mut())
             } {
-                tasks.push(&mut out_stream.task);
-                receivers.push(Box::pin(async {
-                    (out_stream.receiver.recv().await, inputs)
-                }))
+                match out_stream {
+                    StreamOUT::Audio { task, receiver, .. } => {
+                        tasks.push(task);
+                        audio_receivers.push(Box::pin(async { (receiver.recv().await, inputs) }));
+                    }
+                    StreamOUT::Video { task, receiver, .. } => {
+                        tasks.push(task);
+                        video_receivers
+                            .push(Box::pin(async { (receiver.recv().await, inputs, *id) }));
+                    }
+                }
             }
 
             for (_, in_stream) in self.in_streams.iter_mut() {
-                tasks.push(&mut in_stream.task);
+                match in_stream {
+                    StreamIN::Audio { task, .. } => tasks.push(task),
+                    StreamIN::Video { task, .. } => tasks.push(task),
+                }
             }
 
             tokio::select! {
                 _ = async { if tasks.is_empty() {std::future::pending().await} else {futures_util::future::select_all(tasks).await}}  => {
                     panic!("A task that should never finish has finished");
                 }
-                ((Some(sample), inputs), _, _) = async {if receivers.is_empty() {std::future::pending().await} else{ futures_util::future::select_all(receivers).await}} => {
+                ((Some(sample), inputs), _, _) = async {if audio_receivers.is_empty() {std::future::pending().await} else{ futures_util::future::select_all(audio_receivers).await}} => {
                     for input in inputs{
                         if let Some(stream) = self.in_streams.get(input){
-                            if let Err(err) = stream.sender.send(sample){
-                                error!("Cannot send sample to: {} {err}", stream.name);
+                            match stream{
+                                StreamIN::Audio { name, task, sender } => {
+                                    if let Err(err) = sender.send(sample){
+                                        error!("Cannot send sample to: {} {err}", name);
+                                    }
+                                },
+                                StreamIN::Video {..} => {
+                                    warn!("Video Input connected to Audio Output");
+                                }
                             }
                         }
                     }
                 }
-                Some(message) = async {
-                    message_receiver.await
-                    .expect("Cannot receive message from the the-man service.")
-                    .clone()
+                ((o_frame, inputs, id), _, _) = async {if video_receivers.is_empty() {std::future::pending().await} else{ futures_util::future::select_all(video_receivers).await}} => {
+                    if let Some(frame) = o_frame{
+                        for input in inputs{
+                            if let Some(stream) = self.in_streams.get(input){
+                                match stream{
+                                    StreamIN::Audio { ..} => {
+                                        warn!("Audio Input connected to Video Output");
+                                    },
+                                    StreamIN::Video {name, sender, ..} => {
+                                        if let Err(err) = sender.send(frame.clone()){
+                                            error!("Cannot send sample to: {} {err}", name);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(stream) = self.out_streams.get_mut(&id){
+                            match &mut stream.0{
+                                StreamOUT::Video {last_frame, ..} => {
+                                    *last_frame = Some(frame);
+                                },
+                                _ => {
+                                    error!("Is not video out stream");
+                                }
+                            }
+                        }else{
+                            error!("Invalid stream index");
+                        }
+                    }else{
+                        error!("Stream died: {id}");
+                        self.out_streams.remove(&id);
+                    }
+                }
+                event = async {
+                    message_receiver.await.map(|res|res.clone())
                 } => {
-                    if let Ok(command) = Command::from_str(&message.raw.data) {
-                        self.handle_command(message, command).await;
+                    if let Ok(message) = event{
+                        if let Some(message) = message{
+                            if let Ok(command) = Command::from_str(&message.raw.data) {
+                                self.handle_command(message, command).await;
+                            }
+                        }
+                    }else{
+                        static LAST_TIME: Mutex<Option<std::time::Instant>> = Mutex::const_new(None);
+                        let mut last_time = LAST_TIME.lock().await;
+                        let mut show = false;
+                        if let Some(instant) = &*last_time{
+                            if instant.elapsed() > std::time::Duration::from_secs(1){
+                                show = true;
+                            }
+                        }else{
+                            show = true;
+                        }
+                        if show{
+                            error!("Cannot receive message from the the-man service.");
+                            *last_time = Some(std::time::Instant::now());
+                        }
                     }
                 }
                 Some(request) = self.receiver.recv() => {
@@ -303,7 +438,7 @@ impl TheManService {
                                 let (sender, receiver) = channel::<f32>();
 
                                 let idx = *idx;
-                                StreamOUT {
+                                StreamOUT::Audio {
                                     name: format!(
                                         "opus decoder and receiver for {}-{}-{idx}",
                                         base64_serialize(&message.raw.conversation.hash()).unwrap(),
@@ -458,7 +593,7 @@ impl TheManService {
                 _ = result_sender.send(output.1);
             }
 
-            ServiceRequest::AddInput(conversation_id, last_message, ttl, result_sender) => {
+            ServiceRequest::AddAudioInput(conversation_id, last_message, ttl, result_sender) => {
                 let mut conversation = self
                     .protocol
                     .get_conversation(conversation_id)
@@ -504,7 +639,7 @@ impl TheManService {
                     )
                     .await;
 
-                let stream = StreamIN {
+                let stream = StreamIN::Audio {
                     name: format!(
                         "opus encoder and sender for: {}-{idx}",
                         base64_serialize(&conversation_id).unwrap()
@@ -584,7 +719,7 @@ impl TheManService {
                 _ = result_sender.send(idx);
             }
 
-            ServiceRequest::DirectAddInput(conversation_id, result_sender) => {
+            ServiceRequest::DirectAddAudioInput(conversation_id, result_sender) => {
                 let codec = self
                     .audio_codecs
                     .iter()
@@ -612,7 +747,7 @@ impl TheManService {
                     })
                     .await;
 
-                let stream = StreamIN {
+                let stream = StreamIN::Audio {
                     name: format!(
                         "opus encoder and sender for: {}-{idx}",
                         base64_serialize(&conversation_id).unwrap()
@@ -671,6 +806,113 @@ impl TheManService {
                 }
             }
 
+            ServiceRequest::DirectAddVideoInput(conversation_id, result_sender) => {
+                // let codec = self
+                //     .audio_codecs
+                //     .iter()
+                //     .find(|codec| codec.name() == "opus")
+                //     .expect("Cannot get opus codec");
+                // let encoder_settings = codec
+                //     .default_encoder_settings(media_man::SampleFormat::F32, 48000, 1)
+                //     .unwrap();
+                // let mut encoder = codec.create_encoder(encoder_settings).unwrap();
+
+                let (sender, mut receiver) = channel::<(u32, u32, Arc<[u8]>)>();
+
+                let protocol = self.protocol.clone();
+
+                let active = self.conversations.entry(conversation_id).or_default();
+                let idx = active.next_idx;
+                active.next_idx += 1;
+
+                protocol
+                    .send_stream(protocol::StreamEvent::Start {
+                        conversation_id,
+                        idx,
+                        codec: String::from("raw"),
+                        settings: String::default(),
+                    })
+                    .await;
+
+                let stream = StreamIN::Video {
+                    name: format!(
+                        "raw and sender for: {}-{idx}",
+                        base64_serialize(&conversation_id).unwrap()
+                    ),
+                    task: Box::pin(async move {
+                        struct DropConversation(ProtocolTheMan<Store>, Hash, u32);
+
+                        impl Drop for DropConversation {
+                            fn drop(&mut self) {
+                                tokio::task::block_in_place(|| {
+                                    tokio::runtime::Handle::current().block_on(async {
+                                        self.0
+                                            .send_stream(protocol::StreamEvent::Stop {
+                                                conversation_id: self.1,
+                                                idx: self.2,
+                                            })
+                                            .await;
+                                    });
+                                });
+                            }
+                        }
+
+                        let conversation = DropConversation(protocol.clone(), conversation_id, idx);
+
+                        loop {
+                            let Some(frame) = receiver.recv().await else {
+                                continue;
+                            };
+
+                            let mut buffer = Vec::default();
+
+                            if let Err(err) = bincode::encode_into_std_write(
+                                &frame,
+                                &mut buffer,
+                                bincode::config::standard(),
+                            ) {
+                                error!("Cannot encode frame {err}");
+                            }
+
+                            info!("Buffer Size: {}", buffer.len());
+
+                            protocol
+                                .send_stream(protocol::StreamEvent::Play {
+                                    conversation_id: conversation.1,
+                                    idx: conversation.2,
+                                    data: Arc::from(buffer),
+                                })
+                                .await;
+
+                            // if let Err(err) =
+                            //     encoder.encode(&[&media_man::FrameAudio::f32_new(vec![sample])])
+                            // {
+                            //     error!("opus encode: {err:?}");
+                            //     continue;
+                            // }
+
+                            // while let Some(packet) = encoder.get_packet() {
+                            //     protocol
+                            //         .send_stream(protocol::StreamEvent::Play {
+                            //             conversation_id: conversation.1,
+                            //             idx: conversation.2,
+                            //             data: Arc::from(packet.data),
+                            //         })
+                            //         .await;
+                            // }
+                        }
+                    }),
+                    sender,
+                };
+
+                let id = self.add_input_stream(stream);
+                let active = self.conversations.entry(conversation_id).or_default();
+                active.inputs.insert(idx, id);
+                if result_sender.send(idx).is_err() {
+                    warn!("Cannot respond");
+                }
+            }
+
             ServiceRequest::StopInput(conversation_id, idx) => {
                 let active = self.conversations.entry(conversation_id).or_default();
                 let Some(stream) = active.inputs.remove(&idx) else {
@@ -691,9 +933,20 @@ impl TheManService {
 
             ServiceRequest::StreamName(id, result_sender) => {
                 if let Some(stream) = self.in_streams.get(&id) {
-                    _ = result_sender.send(Some(stream.name.clone()));
+                    _ = result_sender.send(Some(stream.name().clone()));
                 } else if let Some((stream, _)) = self.out_streams.get(&id) {
-                    _ = result_sender.send(Some(stream.name.clone()));
+                    _ = result_sender.send(Some(stream.name().clone()));
+                } else {
+                    _ = result_sender.send(None);
+                }
+            }
+            ServiceRequest::StreamLastVideoFrame(id, result_sender) => {
+                if let Some(stream) = self.out_streams.get(&id) {
+                    if let StreamOUT::Video { last_frame, .. } = &stream.0 {
+                        _ = result_sender.send(last_frame.clone());
+                    } else {
+                        _ = result_sender.send(None);
+                    }
                 } else {
                     _ = result_sender.send(None);
                 }
@@ -725,6 +978,10 @@ impl TheManService {
                     connections.swap_remove(to_remove);
                 }
             }
+
+            ServiceRequest::AddVideo(core, id) => {
+                self.add_video_stream(core, id);
+            }
         }
     }
 
@@ -751,7 +1008,7 @@ impl TheManService {
                         let mut decoder = audio_codec.create_decoder(decoder_settings).unwrap();
                         let (sender, receiver) = channel::<f32>();
 
-                        StreamOUT {
+                        StreamOUT::Audio {
                             name: format!(
                                 "opus decoder and direct receiver for {}-{}-{idx}",
                                 base64_serialize(&conversation_id).unwrap(),
@@ -786,6 +1043,69 @@ impl TheManService {
 
                     output.insert(idx, (psender, id));
                     break;
+                }
+
+                if codec_name == "raw" {
+                    // video
+
+                    let (psender, mut preceiver) =
+                        tokio::sync::mpsc::channel::<media_man::Packet>(16);
+
+                    let stream = {
+                        // let decoder_settings = audio_codec
+                        //     .default_decoder_settings(media_man::SampleFormat::F32, 48000, 1)
+                        //     .unwrap();
+                        // let mut decoder = audio_codec.create_decoder(decoder_settings).unwrap();
+                        let (sender, receiver) = channel::<(u32, u32, Arc<[u8]>)>();
+
+                        StreamOUT::Video {
+                            name: format!(
+                                "raw video and direct receiver for {}-{}-{idx}",
+                                base64_serialize(&conversation_id).unwrap(),
+                                base64_serialize(&node_id).unwrap()
+                            ),
+                            task: Box::pin(async move {
+                                loop {
+                                    let Some(packet) = preceiver.recv().await else {
+                                        continue;
+                                    };
+
+                                    match bincode::decode_from_slice::<(u32, u32, Arc<[u8]>), _>(
+                                        &packet.data,
+                                        bincode::config::standard(),
+                                    ) {
+                                        Ok(frame) => {
+                                            _ = sender.send(frame.0);
+                                            // _ = sender.send((frame.0, frame.1, Arc::from(frame.2)));
+                                        }
+                                        Err(err) => {
+                                            error!("Cannot decode frame: {err}");
+                                        }
+                                    }
+
+                                    // match decoder.decode(packet) {
+                                    //     Ok(mut frames) => {
+                                    //         for sample in frames.remove(0).to_f32() {
+                                    //             _ = sender.send(sample);
+                                    //         }
+                                    //     }
+                                    //     Err(err) => {
+                                    //         error!("{err:?} when decoding for {idx}");
+                                    //     }
+                                    // }
+                                }
+                            }),
+                            receiver,
+                            last_frame: None,
+                        }
+                    };
+
+                    let id = self.add_output_stream(stream);
+
+                    let conversation = self.conversations.entry(conversation_id).or_default();
+                    let output = conversation.outputs.entry(node_id).or_default();
+
+                    output.insert(idx, (psender, id));
                 }
             }
             protocol::StreamEvent::Play {
@@ -842,19 +1162,6 @@ impl TheManService {
     }
 }
 
-impl Drop for TheManService {
-    fn drop(&mut self) {
-        _ = self
-            .pipewire_sender
-            .send(pipewire::ToPipeWireEvent::Shutdown);
-        if let Some(pipewire_handle) = self.pipewire_handle.take() {
-            if !pipewire_handle.is_finished() {
-                _ = pipewire_handle.join();
-            }
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct TheMan {
     node: Router,
@@ -863,7 +1170,14 @@ pub struct TheMan {
     message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
     sender: tokio::sync::mpsc::Sender<ServiceRequest>,
 
+    pipewire_handle: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    pipewire_sender: ::pipewire::channel::Sender<pipewire::ToPipeWireEvent>,
+
     task: Arc<tokio::task::JoinHandle<()>>,
+
+    proxy_screenshare: Arc<screencast::Screencast<'static>>,
+    session_screenshare:
+        Arc<Mutex<Option<ashpd::desktop::Session<'static, screencast::Screencast<'static>>>>>,
 }
 
 unsafe impl Send for TheMan {}
@@ -877,6 +1191,9 @@ impl std::fmt::Debug for TheMan {
 
 impl TheMan {
     pub async fn new(name: String, secret_key: SecretKey) -> Self {
+        let (pipewire_sender, pipewire_receiver) = ::pipewire::channel::channel();
+        let pipewire_handle = pipewire::start_pipewire(pipewire_receiver);
+
         let endpoint = iroh::Endpoint::builder()
             .discovery_n0()
             .secret_key(secret_key)
@@ -906,8 +1223,15 @@ impl TheMan {
             let protocol = protocol.clone();
             let node_id = endpoint.node_id();
             let message_receiver = message_receiver.clone();
+            let pipewire_sender = pipewire_sender.clone();
             tokio::spawn(async move {
-                let mut service = TheManService::new(protocol, node_id, message_receiver, receiver);
+                let mut service = TheManService::new(
+                    protocol,
+                    node_id,
+                    message_receiver,
+                    receiver,
+                    pipewire_sender,
+                );
                 service.setup();
                 service.run().await;
             })
@@ -927,8 +1251,18 @@ impl TheMan {
             gossip,
             protocol,
             task: Arc::new(task),
+
+            pipewire_handle: Arc::new(Mutex::new(Some(pipewire_handle))),
+            pipewire_sender,
+
             message_receiver,
             sender,
+            proxy_screenshare: Arc::new(
+                screencast::Screencast::new()
+                    .await
+                    .expect("cannot create screenshare session"),
+            ),
+            session_screenshare: Arc::default(),
         }
     }
 
@@ -1001,7 +1335,7 @@ impl TheMan {
         let (sender, receiver) = ochannel();
 
         self.sender
-            .send(ServiceRequest::AddInput(
+            .send(ServiceRequest::AddAudioInput(
                 conversation_id,
                 reply_to_message,
                 ttl,
@@ -1013,11 +1347,22 @@ impl TheMan {
         receiver.await.unwrap()
     }
 
-    pub async fn conversation_direct_create_input(&self, conversation_id: Hash) -> u32 {
+    pub async fn conversation_direct_create_audio_input(&self, conversation_id: Hash) -> u32 {
         let (sender, receiver) = ochannel();
 
         self.sender
-            .send(ServiceRequest::DirectAddInput(conversation_id, sender))
+            .send(ServiceRequest::DirectAddAudioInput(conversation_id, sender))
+            .await
+            .unwrap();
+
+        receiver.await.unwrap()
+    }
+
+    pub async fn conversation_direct_create_video_input(&self, conversation_id: Hash) -> u32 {
+        let (sender, receiver) = ochannel();
+
+        self.sender
+            .send(ServiceRequest::DirectAddVideoInput(conversation_id, sender))
             .await
             .unwrap();
 
@@ -1086,6 +1431,15 @@ impl TheMan {
         receiver.await.unwrap()
     }
 
+    pub async fn stream_last_video_frame(&self, id: usize) -> Option<(u32, u32, Arc<[u8]>)> {
+        let (sender, receiver) = ochannel();
+        self.sender
+            .send(ServiceRequest::StreamLastVideoFrame(id, sender))
+            .await
+            .unwrap();
+        receiver.await.unwrap()
+    }
+
     pub async fn output_stream_connections(&self, id: usize) -> Vec<usize> {
         let (sender, receiver) = ochannel();
         self.sender
@@ -1123,6 +1477,82 @@ impl TheMan {
 
     pub async fn message_set_ttl(&self, hash: Hash, ttl: u16) {
         self.protocol.message_set_ttl(hash, ttl).await;
+    }
+
+    pub async fn screen_share(&self) {
+        if let Some(session) = self.session_screenshare.lock().await.take() {
+            _ = self
+                .pipewire_sender
+                .send(pipewire::ToPipeWireEvent::RemoveCore(1));
+            session.close().await;
+        }
+
+        let session = self
+            .proxy_screenshare
+            .create_session()
+            .await
+            .expect("Cannot create screenshare session");
+
+        *self.session_screenshare.lock().await = Some(session);
+
+        let lok = self.session_screenshare.lock().await;
+        let s = lok.as_ref().unwrap();
+
+        if let Ok(_) = self
+            .proxy_screenshare
+            .select_sources(
+                s,
+                screencast::CursorMode::Embedded,
+                screencast::SourceType::Monitor
+                    | screencast::SourceType::Window
+                    | screencast::SourceType::Virtual,
+                true,
+                None,
+                ashpd::desktop::PersistMode::DoNot,
+            )
+            .await
+        {}
+
+        let mut _streams = Vec::default();
+
+        if let Ok(res) = self.proxy_screenshare.start(s, None).await {
+            if let Ok(streams) = res.response() {
+                for stream in streams.streams() {
+                    _streams.push(stream.pipe_wire_node_id());
+                }
+            }
+        }
+
+        if let Ok(fd) = self.proxy_screenshare.open_pipe_wire_remote(s).await {
+            info!("Pipewire FD: {:?}", fd);
+
+            _ = self
+                .pipewire_sender
+                .send(pipewire::ToPipeWireEvent::ConnectTo(fd));
+
+            for stream in _streams {
+                _ = self.sender.send(ServiceRequest::AddVideo(1, stream)).await;
+            }
+        }
+    }
+}
+
+impl Drop for TheMan {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.pipewire_handle) != 1 {
+            return;
+        }
+
+        info!("sending: pipewire Shutdown");
+
+        _ = self
+            .pipewire_sender
+            .send(pipewire::ToPipeWireEvent::Shutdown);
+        if let Some(pipewire_handle) = self.pipewire_handle.blocking_lock().take() {
+            if !pipewire_handle.is_finished() {
+                _ = pipewire_handle.join();
+            }
+        }
     }
 }
 

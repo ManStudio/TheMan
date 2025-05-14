@@ -17,13 +17,13 @@ macro_rules! make_lib {
 
                     let lib: &'static $crate::libloading::Library = unsafe{ &*(&*library as *const _)};
 
-                    Ok(Self{
+                    Ok(unsafe{Self{
                         library,
 
                         $(
-                            [<_ $sym_name>]: unsafe{ lib.get(concat!(stringify!($sym_name), '\0').as_bytes())? },
+                            [<_ $sym_name>]: lib.get(concat!(stringify!($sym_name), '\0').as_bytes())?,
                         )*
-                    })
+                    }})
                 }
             }
         }

@@ -1,3 +1,5 @@
+use gui_deps::*;
+
 use the_man::base64_serialize;
 
 use eframe::egui;

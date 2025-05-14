@@ -1,7 +1,6 @@
 use lib_kman::libloading;
 use lib_kman::make_lib;
 use libloading::Library;
-use libloading::Symbol;
 
 pub const OPUS_OK: i32 = 0;
 pub const OPUS_BAD_ARG: i32 = -1;

@@ -1,3 +1,5 @@
+use gui_deps::*;
+
 use iroh_blobs::Hash;
 use the_man::base64_serialize;
 use tokio::sync::oneshot;

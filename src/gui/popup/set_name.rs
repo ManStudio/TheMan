@@ -1,6 +1,8 @@
 use iroh_blobs::Hash;
 use the_man::base64_serialize;
 
+use gui_deps::*;
+
 use eframe::egui;
 
 use super::Popup;

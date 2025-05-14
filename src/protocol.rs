@@ -5,6 +5,8 @@ use std::{
     sync::{Arc, Weak},
 };
 
+use gui_deps::*;
+
 use chrono::Utc;
 use ed25519::Signature;
 use futures_util::StreamExt;
@@ -46,6 +48,31 @@ impl Signed {
     }
 }
 
+impl bincode::Encode for Signed {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        bincode::Encode::encode(&self.sign.to_bytes(), encoder)?;
+        bincode::Encode::encode(&self.bytes, encoder)?;
+        Ok(())
+    }
+}
+
+impl<Context> bincode::Decode<Context> for Signed {
+    fn decode<D: bincode::de::Decoder<Context = Context>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let sign_bytes = <[u8; Signature::BYTE_SIZE] as bincode::Decode<Context>>::decode(decoder)?;
+        let bytes = <Vec<u8> as bincode::Decode<Context>>::decode(decoder)?;
+
+        Ok(Self {
+            sign: Signature::from_bytes(&sign_bytes),
+            bytes,
+        })
+    }
+}
+
 pub const ALPN: &[u8] = b"the-man";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -53,6 +80,67 @@ pub struct Ticket {
     pub owner_id: NodeId,
     pub hash_and_format: HashAndFormat,
     pub ttl: u16,
+}
+
+impl bincode::enc::Encode for Ticket {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        bincode::Encode::encode(self.owner_id.as_bytes(), encoder)?;
+        bincode::Encode::encode(self.hash_and_format.hash.as_bytes(), encoder)?;
+        bincode::Encode::encode(&self.hash_and_format.format.is_hash_seq(), encoder)?;
+        bincode::Encode::encode(&self.ttl, encoder)?;
+        Ok(())
+    }
+}
+
+impl<Context> bincode::de::Decode<Context> for Ticket {
+    fn decode<D: bincode::de::Decoder<Context = Context>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let owner_id = <[u8; 32] as bincode::Decode<Context>>::decode(decoder)?;
+        let hash = <[u8; 32] as bincode::Decode<Context>>::decode(decoder)?;
+        let is_seq = <bool as bincode::Decode<Context>>::decode(decoder)?;
+        let ttl = <u16 as bincode::Decode<Context>>::decode(decoder)?;
+
+        Ok(Self {
+            owner_id: NodeId::from_bytes(&owner_id).unwrap(),
+            hash_and_format: HashAndFormat {
+                hash: Hash::from_bytes(hash),
+                format: if is_seq {
+                    BlobFormat::HashSeq
+                } else {
+                    BlobFormat::Raw
+                },
+            },
+            ttl,
+        })
+    }
+}
+
+impl<'a, Context> bincode::de::BorrowDecode<'a, Context> for Ticket {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'a, Context = Context>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let owner_id = <[u8; 32] as bincode::BorrowDecode<Context>>::borrow_decode(decoder)?;
+        let hash = <[u8; 32] as bincode::BorrowDecode<Context>>::borrow_decode(decoder)?;
+        let is_seq = <bool as bincode::BorrowDecode<Context>>::borrow_decode(decoder)?;
+        let ttl = <u16 as bincode::BorrowDecode<Context>>::borrow_decode(decoder)?;
+
+        Ok(Self {
+            owner_id: NodeId::from_bytes(&owner_id).unwrap(),
+            hash_and_format: HashAndFormat {
+                hash: Hash::from_bytes(hash),
+                format: if is_seq {
+                    BlobFormat::HashSeq
+                } else {
+                    BlobFormat::Raw
+                },
+            },
+            ttl,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -83,6 +171,40 @@ pub struct RawMessage {
     pub data: String,
 }
 
+impl bincode::Encode for RawMessage {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        bincode::Encode::encode(&self.last, encoder)?;
+        bincode::Encode::encode(&self.time.timestamp(), encoder)?;
+        bincode::Encode::encode(&self.time.timestamp_subsec_nanos(), encoder)?;
+        bincode::Encode::encode(&self.conversation, encoder)?;
+        bincode::Encode::encode(&self.data, encoder)?;
+
+        Ok(())
+    }
+}
+
+impl<Context> bincode::Decode<Context> for RawMessage {
+    fn decode<D: bincode::de::Decoder<Context = Context>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let last = <Option<Ticket> as bincode::Decode<Context>>::decode(decoder)?;
+        let time_s = <i64 as bincode::Decode<Context>>::decode(decoder)?;
+        let time_nanos = <u32 as bincode::Decode<Context>>::decode(decoder)?;
+        let conversation = <Ticket as bincode::Decode<Context>>::decode(decoder)?;
+        let data = <String as bincode::Decode<Context>>::decode(decoder)?;
+
+        Ok(Self {
+            last,
+            time: Time::from_timestamp(time_s, time_nanos).unwrap(),
+            conversation,
+            data,
+        })
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RawConversation {
     pub nodes: Vec<NodeId>,
@@ -95,6 +217,37 @@ impl RawConversation {
             nodes: nodes.into(),
             time: Utc::now(),
         }
+    }
+}
+
+impl bincode::Encode for RawConversation {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        bincode::Encode::encode(
+            unsafe { std::mem::transmute::<&Vec<NodeId>, &Vec<[u8; 32]>>(&self.nodes) },
+            encoder,
+        )?;
+        bincode::Encode::encode(&self.time.timestamp(), encoder)?;
+        bincode::Encode::encode(&self.time.timestamp_subsec_nanos(), encoder)?;
+
+        Ok(())
+    }
+}
+
+impl<Context> bincode::Decode<Context> for RawConversation {
+    fn decode<D: bincode::de::Decoder<Context = Context>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let nodes = <Vec<[u8; 32]> as bincode::Decode<Context>>::decode(decoder)?;
+        let time = <i64 as bincode::Decode<Context>>::decode(decoder)?;
+        let nanos = <u32 as bincode::Decode<Context>>::decode(decoder)?;
+
+        Ok(Self {
+            nodes: unsafe { std::mem::transmute::<Vec<[u8; 32]>, Vec<NodeId>>(nodes) },
+            time: Time::from_timestamp(time, nanos).unwrap(),
+        })
     }
 }
 
@@ -210,23 +363,23 @@ pub struct Message {
     pub ticket: Ticket,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 pub enum Packet {
     Welcome,
     SendMessage(Ticket),
     StartStream {
-        conversation_id: Hash,
+        conversation_id: [u8; 32],
         idx: u32,
         codec: String,
         settings: String,
     },
     PlayStream {
-        conversation_id: Hash,
+        conversation_id: [u8; 32],
         idx: u32,
         data: Vec<u8>,
     },
     StopStream {
-        conversation_id: Hash,
+        conversation_id: [u8; 32],
         idx: u32,
     },
 }
@@ -287,10 +440,9 @@ impl LazyData {
         match self {
             LazyData::ToLoad(ticket) => match blobs.client().read_to_bytes(ticket.hash()).await {
                 Ok(data) => {
-                    let Ok((signed, _len)) = bincode::serde::decode_from_slice::<Signed, _>(
-                        &data,
-                        bincode::config::legacy(),
-                    ) else {
+                    let Ok((signed, _len)) =
+                        bincode::decode_from_slice::<Signed, _>(&data, bincode::config::legacy())
+                    else {
                         error!("Cannot parse Signed");
                         return None;
                     };
@@ -445,7 +597,7 @@ impl<S: Store> TheManService<S> {
                     .await
                     .unwrap();
 
-                let Ok(raw) = bincode::serde::decode_from_slice::<RawConversation, _>(
+                let Ok(raw) = bincode::decode_from_slice::<RawConversation, _>(
                     &bytes,
                     bincode::config::legacy(),
                 ) else {
@@ -502,10 +654,9 @@ impl<S: Store> TheManService<S> {
                         .insert(ticket.hash(), TicketFor::Message);
                 }
 
-                let Ok(raw) = bincode::serde::decode_from_slice::<RawMessage, _>(
-                    &bytes,
-                    bincode::config::legacy(),
-                ) else {
+                let Ok(raw) =
+                    bincode::decode_from_slice::<RawMessage, _>(&bytes, bincode::config::legacy())
+                else {
                     error!(
                         "Cannot parse message: {}",
                         base64_serialize(&ticket.hash()).unwrap()
@@ -628,8 +779,7 @@ impl<S: Store> TheManService<S> {
             }
         };
 
-        let Ok(signed) =
-            bincode::serde::decode_from_slice::<Signed, _>(&bytes, bincode::config::legacy())
+        let Ok(signed) = bincode::decode_from_slice::<Signed, _>(&bytes, bincode::config::legacy())
         else {
             error!(
                 "Cannot parse signed ticket data: {}",
@@ -663,42 +813,75 @@ impl<S: Store> TheManService<S> {
                     .expect("Cannot get connection node_id");
                 info!("Connected to: {}", base64_serialize(&node_id).unwrap());
                 let mut buffer = Vec::default();
-                ciborium::into_writer(&Packet::Welcome, &mut buffer).unwrap();
+                bincode::encode_into_std_write(
+                    &Packet::Welcome,
+                    &mut buffer,
+                    bincode::config::standard(),
+                )
+                .unwrap();
                 sender
                     .write_all(&buffer)
                     .await
                     .expect("Cannot write welcome packet");
 
-                let receiver = futures_util::stream::unfold(
-                    (receiver, [0u8; 1024]),
-                    move |(mut receiver, mut buffer)| async move {
-                        match receiver.read(&mut buffer).await {
-                            Ok(Some(len)) => {
-                                let mut cursor = std::io::Cursor::new(&buffer[0..len]);
+                const SIZE: usize = 1024 * 1024 * 100;
 
+                let receiver = futures_util::stream::unfold(
+                    (receiver, vec![0u8; SIZE], 0usize),
+                    move |(mut receiver, mut buffer, mut pos)| async move {
+                        match receiver.read(&mut buffer[pos..]).await {
+                            Ok(Some(len)) => {
+                                pos += len;
                                 let mut packets = Vec::default();
 
+                                info!("Received: {len} has pos: {pos}");
+
                                 loop {
-                                    let Ok(packet) =
-                                        ciborium::from_reader::<Packet, _>(&mut cursor)
-                                    else {
-                                        error!(
-                                            "Cannot read packet from: {}",
-                                            base64_serialize(&node_id).unwrap()
-                                        );
-                                        return None;
-                                    };
+                                    match bincode::decode_from_slice::<Packet, _>(
+                                        &buffer[..pos],
+                                        bincode::config::standard(),
+                                    ) {
+                                        Ok((packet, c)) => {
+                                            packets.push(packet);
 
-                                    trace!("Readed {}, from {}", cursor.position(), len);
+                                            buffer.copy_within(c..c + pos, 0);
+                                            pos -= c;
 
-                                    packets.push(packet);
+                                            if pos == 0 {
+                                                break;
+                                            }
+                                        }
+                                        Err(err) => {
+                                            if let bincode::error::DecodeError::UnexpectedEnd {
+                                                ..
+                                            } = &err
+                                            {
+                                                return Some((packets, (receiver, buffer, pos)));
+                                            }
 
-                                    if cursor.position() == len as u64 {
-                                        break;
+                                            if let bincode::error::DecodeError::Io {
+                                                inner, ..
+                                            } = &err
+                                            {
+                                                if let std::io::ErrorKind::UnexpectedEof =
+                                                    inner.kind()
+                                                {
+                                                    return Some((
+                                                        packets,
+                                                        (receiver, buffer, pos),
+                                                    ));
+                                                }
+                                            }
+                                            error!(
+                                                "Cannot read packet from: {}, {err}",
+                                                base64_serialize(&node_id).unwrap()
+                                            );
+                                            return None;
+                                        }
                                     }
                                 }
 
-                                Some((packets, (receiver, buffer)))
+                                Some((packets, (receiver, buffer, pos)))
                             }
                             Ok(None) => None,
                             Err(err) => {
@@ -720,8 +903,7 @@ impl<S: Store> TheManService<S> {
 
             ServiceRequest::Create(raw_conversation, sender) => {
                 let bytes =
-                    bincode::serde::encode_to_vec(&raw_conversation, bincode::config::legacy())
-                        .unwrap();
+                    bincode::encode_to_vec(&raw_conversation, bincode::config::legacy()).unwrap();
 
                 let Ok(node_addr) = self.endpoint.node_addr().await else {
                     error!("Cannot get the node_addr");
@@ -731,7 +913,7 @@ impl<S: Store> TheManService<S> {
                     return;
                 };
 
-                let bytes = bincode::serde::encode_to_vec(
+                let bytes = bincode::encode_to_vec(
                     Signed::new(self.endpoint.secret_key(), bytes),
                     bincode::config::legacy(),
                 )
@@ -824,8 +1006,7 @@ impl<S: Store> TheManService<S> {
                     return;
                 };
 
-                let Ok(bytes) =
-                    bincode::serde::encode_to_vec(&raw_message, bincode::config::legacy())
+                let Ok(bytes) = bincode::encode_to_vec(&raw_message, bincode::config::legacy())
                 else {
                     error!("Cannot serialize message");
                     if sender.send(None).is_err() {
@@ -834,7 +1015,7 @@ impl<S: Store> TheManService<S> {
                     return;
                 };
 
-                let bytes = bincode::serde::encode_to_vec(
+                let bytes = bincode::encode_to_vec(
                     Signed::new(self.endpoint.secret_key(), bytes),
                     bincode::config::legacy(),
                 )
@@ -893,7 +1074,12 @@ impl<S: Store> TheManService<S> {
                 }
 
                 let mut buffer = Vec::default();
-                ciborium::into_writer(&Packet::SendMessage(ticket), &mut buffer).unwrap();
+                bincode::encode_into_std_write(
+                    Packet::SendMessage(ticket),
+                    &mut buffer,
+                    bincode::config::standard(),
+                )
+                .unwrap();
 
                 let self_node_id = self.endpoint.node_id();
 
@@ -1048,7 +1234,7 @@ impl<S: Store> TheManService<S> {
                         codec,
                         settings,
                     } => Packet::StartStream {
-                        conversation_id,
+                        conversation_id: *conversation_id.as_bytes(),
                         idx,
                         codec,
                         settings,
@@ -1058,7 +1244,7 @@ impl<S: Store> TheManService<S> {
                         idx,
                         data,
                     } => Packet::PlayStream {
-                        conversation_id,
+                        conversation_id: *conversation_id.as_bytes(),
                         idx,
                         data: data.to_vec(),
                     },
@@ -1066,13 +1252,17 @@ impl<S: Store> TheManService<S> {
                         conversation_id,
                         idx,
                     } => Packet::StopStream {
-                        conversation_id,
+                        conversation_id: *conversation_id.as_bytes(),
                         idx,
                     },
                 };
 
                 let mut buffer = Vec::default();
-                if let Err(err) = ciborium::into_writer(&packet, &mut buffer) {
+                if let Err(err) = bincode::encode_into_std_write(
+                    &packet,
+                    &mut buffer,
+                    bincode::config::standard(),
+                ) {
                     error!("Cannot encode packet: {err}");
                     return;
                 }
@@ -1128,9 +1318,10 @@ impl<S: Store> TheManService<S> {
                         debug!("Sending tail: {}", base64_serialize(&tail.hash).unwrap());
                         let mut buffer = Vec::new();
                         let msg = self.messages.get(&tail.hash).expect("Cannot send message entry because we don't have the message from the entry");
-                        ciborium::into_writer(
-                            &Packet::SendMessage(msg.ticket.clone()),
+                        bincode::encode_into_std_write(
+                            Packet::SendMessage(msg.ticket.clone()),
                             &mut buffer,
+                            bincode::config::standard(),
                         )
                         .expect("Cannot serialize Ticket???");
                         match connection.sender.write_all(&buffer).await {
@@ -1167,7 +1358,7 @@ impl<S: Store> TheManService<S> {
                     _ = sender.send((
                         node_id,
                         StreamEvent::Start {
-                            conversation_id: conversation_hash,
+                            conversation_id: Hash::from_bytes(conversation_hash),
                             idx,
                             codec: codec.clone(),
                             settings: settings.clone(),
@@ -1189,7 +1380,7 @@ impl<S: Store> TheManService<S> {
                     _ = sender.send((
                         node_id,
                         StreamEvent::Play {
-                            conversation_id: conversation_hash,
+                            conversation_id: Hash::from_bytes(conversation_hash),
                             idx,
                             data: data.clone(),
                         },
@@ -1207,7 +1398,7 @@ impl<S: Store> TheManService<S> {
                     _ = sender.send((
                         node_id,
                         StreamEvent::Stop {
-                            conversation_id: conversation_hash,
+                            conversation_id: Hash::from_bytes(conversation_hash),
                             idx,
                         },
                     ));
