@@ -3353,6 +3353,7 @@ name = "media-man"
 version = "0.1.0"
 dependencies = [
  "media-man-codec-opus",
+ "media-man-codec-raw",
  "media-man-core",
 ]
 
@@ -3362,6 +3363,14 @@ version = "0.1.0"
 dependencies = [
  "media-man-core",
  "opus-sys-kman",
+]
+
+[[package]]
+name = "media-man-codec-raw"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "media-man-core",
 ]
 
 [[package]]

@@ -25,7 +25,7 @@ futures-util = "0.3.31"
 iroh = "0.34"
 iroh-blobs = { version = "0.34", features = ["rpc"] }
 iroh-gossip = { version = "0.34", features = ["rpc"] }
-media-man = { path = "crates/media-man", features = ["codec-opus"] }
+media-man = { path = "crates/media-man", features = ["codec-opus", "codec-raw"] }
 rand = "0.8"
 thiserror = "2.0.11"
 tokio = { version = "1.44.2", features = ["bytes", "fs", "io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync"] }
@@ -37,6 +37,7 @@ egui_tiles = "0.12.0"
 zbus = "5.5.0"
 ashpd = "0.11.0"
 pipewire = { version = "0.8.0" }
+bincode = {version = "2.0.1", features = ["serde"]}
 
 [dependencies]
 base64 = { workspace = true }
@@ -56,7 +57,7 @@ ciborium = { workspace = true }
 bytes = { workspace = true }
 anyhow = { workspace = true }
 rand = { workspace = true }
+bincode = { workspace = true }
 
 serde = { version = "1.0.217", features = ["derive"] }
-bincode = {version = "2.0.1", features = ["serde"]}
 platform = {path = "crates/platform"}

@@ -338,6 +338,72 @@ impl FrameAudio {
             )
         }
     }
+
+    pub fn as_f32(&self) -> &[f32] {
+        assert_eq!(self.sample_format, SampleFormat::F32);
+
+        unsafe {
+            std::slice::from_raw_parts(
+                std::mem::transmute::<*const u8, *const f32>(self.data.as_ptr()),
+                self.data.len() / size_of::<f32>(),
+            )
+        }
+    }
+
+    pub fn as_f32_mut(&mut self) -> &mut [f32] {
+        assert_eq!(self.sample_format, SampleFormat::F32);
+
+        unsafe {
+            std::slice::from_raw_parts_mut(
+                std::mem::transmute::<*mut u8, *mut f32>(self.data.as_mut_ptr()),
+                self.data.len() / size_of::<f32>(),
+            )
+        }
+    }
+
+    pub fn to_i16(self) -> Vec<i16> {
+        assert_eq!(self.sample_format, SampleFormat::I16);
+
+        unsafe {
+            let capacity = self.data.capacity();
+            let data = self.data.leak();
+            Vec::from_raw_parts(
+                data.as_mut_ptr() as *mut i16,
+                data.len() / size_of::<i16>(),
+                capacity / size_of::<i16>(),
+            )
+        }
+    }
+
+    pub fn as_i16(&self) -> &[i16] {
+        assert_eq!(self.sample_format, SampleFormat::I16);
+
+        unsafe {
+            std::slice::from_raw_parts(
+                std::mem::transmute::<*const u8, *const i16>(self.data.as_ptr()),
+                self.data.len() / size_of::<i16>(),
+            )
+        }
+    }
+
+    pub fn as_i16_mut(&mut self) -> &mut [i16] {
+        assert_eq!(self.sample_format, SampleFormat::I16);
+
+        unsafe {
+            std::slice::from_raw_parts_mut(
+                std::mem::transmute::<*mut u8, *mut i16>(self.data.as_mut_ptr()),
+                self.data.len() / size_of::<i16>(),
+            )
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
 }
 
 #[derive(Debug, Clone)]

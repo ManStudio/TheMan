@@ -5,7 +5,7 @@ use iroh::{NodeId, SecretKey, endpoint::RemoteInfo, protocol::Router};
 pub mod protocol;
 use iroh_blobs::Hash;
 type Store = iroh_blobs::store::fs::Store;
-use media_man::{CodecAudioOpus, TCodecAudio};
+use media_man::{CodecAudioOpus, CodecAudioRaw, TCodecAudio};
 use platform::PlatformEvent;
 use protocol::{ConversationHandle, Message, RawConversation, TheMan as ProtocolTheMan, Ticket};
 use serde::{Serialize, de::DeserializeOwned};
@@ -70,7 +70,7 @@ pub struct ActiveConversation {
     inputs: BTreeMap<u32, usize>,
     next_idx: u32,
 
-    outputs: BTreeMap<NodeId, BTreeMap<u32, (tokio::sync::mpsc::Sender<media_man::Packet>, usize)>>,
+    outputs: BTreeMap<NodeId, BTreeMap<u32, (Sender<media_man::Packet>, usize)>>,
 }
 
 enum ServiceRequest {
@@ -122,9 +122,9 @@ impl TheManService {
         node_id: NodeId,
         message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
         receiver: tokio::sync::mpsc::Receiver<ServiceRequest>,
-        // pipewire_sender: ::pipewire::channel::Sender<pipewire::ToPipeWireEvent>,
     ) -> Self {
         let mut audio_codecs = Vec::<Box<dyn TCodecAudio>>::default();
+        audio_codecs.push(Box::new(CodecAudioRaw));
         if let Some(opus) = CodecAudioOpus::new() {
             audio_codecs.push(Box::new(opus));
         } else {
@@ -355,8 +355,7 @@ impl TheManService {
                                 continue;
                             }
 
-                            let (psender, mut preceiver) =
-                                tokio::sync::mpsc::channel::<media_man::Packet>(16);
+                            let (psender, mut preceiver) = channel::<media_man::Packet>();
 
                             let stream = {
                                 let decoder_settings = audio_codec
@@ -384,9 +383,9 @@ impl TheManService {
                                             };
 
                                             match decoder.decode(packet) {
-                                                Ok(mut frames) => {
-                                                    for sample in frames.remove(0).to_f32() {
-                                                        _ = sender.send(sample);
+                                                Ok(frames) => {
+                                                    for sample in frames[0].as_f32() {
+                                                        sender.send(*sample);
                                                     }
                                                 }
                                                 Err(err) => {
@@ -415,33 +414,51 @@ impl TheManService {
                         }
                     }
                     CommandAuto::Play { idx, ticket } => {
+                        static LAST_TIME: Mutex<Option<std::time::Instant>> =
+                            Mutex::const_new(None);
+                        let mut last_time = LAST_TIME.lock().await;
+                        let mut show = false;
+                        if let Some(instant) = &*last_time {
+                            if instant.elapsed() > std::time::Duration::from_secs(1) {
+                                show = true;
+                            }
+                        } else {
+                            show = true;
+                        }
+
                         let Some(conversation) =
                             self.conversations.get_mut(&message.raw.conversation.hash())
                         else {
-                            error!("Play before start???");
+                            if show {
+                                error!("Play before start???");
+                                *last_time = Some(std::time::Instant::now());
+                            }
                             return;
                         };
 
                         let Some(output) = conversation.outputs.get_mut(&message.ticket.owner_id)
                         else {
-                            error!("Play before start???");
+                            if show {
+                                error!("Play before start???");
+                                *last_time = Some(std::time::Instant::now());
+                            }
                             return;
                         };
 
                         let Some(output_stream) = output.get_mut(idx) else {
-                            error!("Play before start???");
+                            if show {
+                                error!("Play before start???");
+                                *last_time = Some(std::time::Instant::now());
+                            }
                             return;
                         };
 
                         let data = self.protocol.get(ticket.clone()).await;
 
-                        if output_stream
-                            .0
-                            .try_send(media_man::Packet { data })
-                            .is_err()
-                        {
+                        if let Err(err) = output_stream.0.send(media_man::Packet { data }) {
+                            error!("{err} when sending packet {idx}");
                             if let Some((_, id)) = output.remove(idx) {
-                                self.out_streams.remove(&id);
+                                if let Some(stream) = self.out_streams.remove(&id) {}
                             }
                         }
                     }
@@ -931,8 +948,7 @@ impl TheManService {
                         continue;
                     }
 
-                    let (psender, mut preceiver) =
-                        tokio::sync::mpsc::channel::<media_man::Packet>(16);
+                    let (psender, mut preceiver) = channel::<media_man::Packet>();
 
                     let stream = {
                         let decoder_settings = audio_codec
@@ -954,9 +970,9 @@ impl TheManService {
                                     };
 
                                     match decoder.decode(packet) {
-                                        Ok(mut frames) => {
-                                            for sample in frames.remove(0).to_f32() {
-                                                _ = sender.send(sample);
+                                        Ok(frames) => {
+                                            for sample in frames[0].as_f32() {
+                                                sender.send(*sample);
                                             }
                                         }
                                         Err(err) => {
@@ -981,8 +997,7 @@ impl TheManService {
                 if codec_name == "raw" {
                     // video
 
-                    let (psender, mut preceiver) =
-                        tokio::sync::mpsc::channel::<media_man::Packet>(16);
+                    let (psender, mut preceiver) = channel::<media_man::Packet>();
 
                     let stream = {
                         // let decoder_settings = audio_codec
@@ -1008,8 +1023,7 @@ impl TheManService {
                                         bincode::config::standard(),
                                     ) {
                                         Ok(frame) => {
-                                            _ = sender.send(frame.0);
-                                            // _ = sender.send((frame.0, frame.1, Arc::from(frame.2)));
+                                            sender.send(frame.0);
                                         }
                                         Err(err) => {
                                             error!("Cannot decode frame: {err}");
@@ -1046,28 +1060,44 @@ impl TheManService {
                 idx,
                 data,
             } => {
+                static LAST_TIME: Mutex<Option<std::time::Instant>> = Mutex::const_new(None);
+                let mut last_time = LAST_TIME.lock().await;
+                let mut show = false;
+                if let Some(instant) = &*last_time {
+                    if instant.elapsed() > std::time::Duration::from_secs(1) {
+                        show = true;
+                    }
+                } else {
+                    show = true;
+                }
                 let Some(conversation) = self.conversations.get_mut(&conversation_id) else {
-                    error!("Play before start???");
+                    if show {
+                        error!("Play before start???");
+                        *last_time = Some(std::time::Instant::now());
+                    }
                     return;
                 };
 
                 let Some(output) = conversation.outputs.get_mut(&node_id) else {
-                    error!("Play before start???");
+                    if show {
+                        error!("Play before start???");
+                        *last_time = Some(std::time::Instant::now());
+                    }
                     return;
                 };
 
                 let Some(output_stream) = output.get_mut(&idx) else {
-                    error!("Play before start???");
+                    if show {
+                        error!("Play before start???");
+                        *last_time = Some(std::time::Instant::now());
+                    }
                     return;
                 };
 
-                if output_stream
-                    .0
-                    .try_send(media_man::Packet {
-                        data: data.to_vec(),
-                    })
-                    .is_err()
-                {
+                if let Err(err) = output_stream.0.send(media_man::Packet {
+                    data: data.to_vec(),
+                }) {
+                    error!("{err} when sending packet {idx}");
                     if let Some((_, id)) = output.remove(&idx) {
                         self.out_streams.remove(&id);
                     }

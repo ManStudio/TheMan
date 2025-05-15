@@ -1,0 +1,8 @@
+[package]
+name = "media-man-codec-raw"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+media-man-core = {path = "../media-man-core"}
+bincode = { workspace = true }
