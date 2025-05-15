@@ -1,5 +1,3 @@
-use gui_deps::*;
-
 use std::collections::HashMap;
 
 use super::Pane;

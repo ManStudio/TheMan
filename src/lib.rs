@@ -1,14 +1,12 @@
 use std::{collections::BTreeMap, future::Future, pin::Pin, str::FromStr, sync::Arc};
 
-use gui_deps::*;
-
-use ashpd::desktop::screencast;
 use base64::{Engine as _, prelude::BASE64_URL_SAFE_NO_PAD};
 use iroh::{NodeId, SecretKey, endpoint::RemoteInfo, protocol::Router};
 pub mod protocol;
 use iroh_blobs::Hash;
 type Store = iroh_blobs::store::fs::Store;
 use media_man::{CodecAudioOpus, TCodecAudio};
+use platform::PlatformEvent;
 use protocol::{ConversationHandle, Message, RawConversation, TheMan as ProtocolTheMan, Ticket};
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::sync::Mutex;
@@ -21,18 +19,16 @@ use tracing::{error, info, warn};
 mod command;
 use command::{Command, CommandAuto, CommandData};
 
-mod pipewire;
-
 pub enum StreamIN {
     Audio {
         name: String,
         task: Pin<Box<dyn Future<Output = ()> + Send>>,
-        sender: Sender<f32>,
+        sender: platform::Sender<f32>,
     },
     Video {
         name: String,
         task: Pin<Box<dyn Future<Output = ()> + Send>>,
-        sender: Sender<(u32, u32, Arc<[u8]>)>,
+        sender: platform::Sender<(u32, u32, Arc<[u8]>)>,
     },
 }
 
@@ -49,13 +45,13 @@ pub enum StreamOUT {
     Audio {
         name: String,
         task: Pin<Box<dyn Future<Output = ()> + Send>>,
-        receiver: Receiver<f32>,
+        receiver: platform::Receiver<f32>,
     },
 
     Video {
         name: String,
         task: Pin<Box<dyn Future<Output = ()> + Send>>,
-        receiver: Receiver<(u32, u32, Arc<[u8]>)>,
+        receiver: platform::Receiver<(u32, u32, Arc<[u8]>)>,
         last_frame: Option<(u32, u32, Arc<[u8]>)>,
     },
 }
@@ -99,7 +95,7 @@ enum ServiceRequest {
     OutputStreamConnect(usize, usize),
     OutputStreamDisconnect(usize, usize),
 
-    AddVideo(i32, u32),
+    ScreenShare,
 }
 
 struct TheManService {
@@ -108,8 +104,8 @@ struct TheManService {
     message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
     receiver: tokio::sync::mpsc::Receiver<ServiceRequest>,
 
-    pipewire_sender: ::pipewire::channel::Sender<pipewire::ToPipeWireEvent>,
-
+    platform: Box<dyn platform::TPlatform + Send + Sync + 'static>,
+    platform_receiver: platform::Receiver<PlatformEvent>,
     audio_codecs: Vec<Box<dyn TCodecAudio>>,
 
     conversations: BTreeMap<Hash, ActiveConversation>,
@@ -118,9 +114,6 @@ struct TheManService {
 
     in_streams: BTreeMap<usize, StreamIN>,
     out_streams: BTreeMap<usize, (StreamOUT, Vec<usize>)>,
-
-    proxy_screenshare: Option<screencast::Screencast<'static>>,
-    session_screenshare: Option<ashpd::desktop::Session<'static, screencast::Screencast<'static>>>,
 }
 
 impl TheManService {
@@ -129,7 +122,7 @@ impl TheManService {
         node_id: NodeId,
         message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
         receiver: tokio::sync::mpsc::Receiver<ServiceRequest>,
-        pipewire_sender: ::pipewire::channel::Sender<pipewire::ToPipeWireEvent>,
+        // pipewire_sender: ::pipewire::channel::Sender<pipewire::ToPipeWireEvent>,
     ) -> Self {
         let mut audio_codecs = Vec::<Box<dyn TCodecAudio>>::default();
         if let Some(opus) = CodecAudioOpus::new() {
@@ -138,14 +131,17 @@ impl TheManService {
             error!("Cannot load opus!");
         }
 
+        let (platform_receiver, platform) =
+            platform::init_platform().expect("Cannot create Platform");
+
         Self {
             protocol,
             node_id,
             message_receiver,
             receiver,
 
-            pipewire_sender,
-
+            platform,
+            platform_receiver,
             audio_codecs,
 
             conversations: BTreeMap::default(),
@@ -153,76 +149,11 @@ impl TheManService {
             next_id: 0,
             in_streams: BTreeMap::default(),
             out_streams: BTreeMap::default(),
-
-            proxy_screenshare: None,
-            session_screenshare: None,
         }
     }
 
-    pub fn setup(&mut self) {
-        self.add_default_input();
-        self.add_default_output();
-    }
-
-    pub fn add_default_input(&mut self) {
-        let (sender, receiver) = channel::<f32>();
-
-        if self
-            .pipewire_sender
-            .send(pipewire::ToPipeWireEvent::CreateInputAuto(0, sender))
-            .is_err()
-        {
-            error!("Cannot create default_input");
-        }
-
-        self.add_output_stream(StreamOUT::Audio {
-            name: "OS Input".to_string(),
-            task: Box::pin(std::future::pending()),
-            receiver,
-        });
-    }
-
-    pub fn add_default_output(&mut self) {
-        let (sender, receiver) = channel::<f32>();
-
-        if self
-            .pipewire_sender
-            .send(pipewire::ToPipeWireEvent::CreateOutputAuto(0, receiver))
-            .is_err()
-        {
-            error!("Cannot create default_output ");
-            return;
-        }
-
-        self.add_input_stream(StreamIN::Audio {
-            name: "OS Output".to_string(),
-            task: Box::pin(std::future::pending()),
-            sender,
-        });
-    }
-
-    pub fn add_video_stream(&mut self, core: i32, id: u32) {
-        let (sender, receiver) = channel::<(u32, u32, Arc<[u8]>)>();
-
-        if self
-            .pipewire_sender
-            .send(pipewire::ToPipeWireEvent::CreateVideoStream(
-                core, id, sender,
-            ))
-            .is_err()
-        {
-            error!("Cannot create vidoe stream for {core} with node id {id}");
-            return;
-        }
-
-        info!("Create video stream");
-
-        self.add_output_stream(StreamOUT::Video {
-            name: format!("OS Video {id}"),
-            task: Box::pin(std::future::pending()),
-            receiver,
-            last_frame: None,
-        });
+    fn setup(&mut self) {
+        self.platform.init();
     }
 
     pub fn add_input_stream(&mut self, stream: StreamIN) -> usize {
@@ -289,14 +220,18 @@ impl TheManService {
                 _ = async { if tasks.is_empty() {std::future::pending().await} else {futures_util::future::select_all(tasks).await}}  => {
                     panic!("A task that should never finish has finished");
                 }
+                o_platform_event = self.platform_receiver.recv() => {
+                    if let Some(platform_event) = o_platform_event{
+                        self.handle_platform(platform_event).await;
+                    }
+                }
+
                 ((Some(sample), inputs), _, _) = async {if audio_receivers.is_empty() {std::future::pending().await} else{ futures_util::future::select_all(audio_receivers).await}} => {
                     for input in inputs{
                         if let Some(stream) = self.in_streams.get(input){
                             match stream{
                                 StreamIN::Audio { name, task, sender } => {
-                                    if let Err(err) = sender.send(sample){
-                                        error!("Cannot send sample to: {} {err}", name);
-                                    }
+                                     sender.send(sample);
                                 },
                                 StreamIN::Video {..} => {
                                     warn!("Video Input connected to Audio Output");
@@ -314,9 +249,7 @@ impl TheManService {
                                         warn!("Audio Input connected to Video Output");
                                     },
                                     StreamIN::Video {name, sender, ..} => {
-                                        if let Err(err) = sender.send(frame.clone()){
-                                            error!("Cannot send sample to: {} {err}", name);
-                                        }
+                                        sender.send(frame.clone());
                                     }
                                 }
                             }
@@ -435,7 +368,7 @@ impl TheManService {
                                     .unwrap();
                                 let mut decoder =
                                     audio_codec.create_decoder(decoder_settings).unwrap();
-                                let (sender, receiver) = channel::<f32>();
+                                let (sender, receiver) = platform::channel::<f32>();
 
                                 let idx = *idx;
                                 StreamOUT::Audio {
@@ -617,7 +550,7 @@ impl TheManService {
                     .unwrap();
                 let mut encoder = codec.create_encoder(encoder_settings).unwrap();
 
-                let (sender, mut receiver) = channel::<f32>();
+                let (sender, mut receiver) = platform::channel::<f32>();
 
                 let protocol = self.protocol.clone();
 
@@ -730,7 +663,7 @@ impl TheManService {
                     .unwrap();
                 let mut encoder = codec.create_encoder(encoder_settings).unwrap();
 
-                let (sender, mut receiver) = channel::<f32>();
+                let (sender, mut receiver) = platform::channel::<f32>();
 
                 let protocol = self.protocol.clone();
 
@@ -817,7 +750,7 @@ impl TheManService {
                 //     .unwrap();
                 // let mut encoder = codec.create_encoder(encoder_settings).unwrap();
 
-                let (sender, mut receiver) = channel::<(u32, u32, Arc<[u8]>)>();
+                let (sender, mut receiver) = platform::channel::<(u32, u32, Arc<[u8]>)>();
 
                 let protocol = self.protocol.clone();
 
@@ -979,8 +912,8 @@ impl TheManService {
                 }
             }
 
-            ServiceRequest::AddVideo(core, id) => {
-                self.add_video_stream(core, id);
+            ServiceRequest::ScreenShare => {
+                self.platform.start_screen_share();
             }
         }
     }
@@ -1006,7 +939,7 @@ impl TheManService {
                             .default_decoder_settings(media_man::SampleFormat::F32, 48000, 1)
                             .unwrap();
                         let mut decoder = audio_codec.create_decoder(decoder_settings).unwrap();
-                        let (sender, receiver) = channel::<f32>();
+                        let (sender, receiver) = platform::channel::<f32>();
 
                         StreamOUT::Audio {
                             name: format!(
@@ -1056,7 +989,7 @@ impl TheManService {
                         //     .default_decoder_settings(media_man::SampleFormat::F32, 48000, 1)
                         //     .unwrap();
                         // let mut decoder = audio_codec.create_decoder(decoder_settings).unwrap();
-                        let (sender, receiver) = channel::<(u32, u32, Arc<[u8]>)>();
+                        let (sender, receiver) = platform::channel::<(u32, u32, Arc<[u8]>)>();
 
                         StreamOUT::Video {
                             name: format!(
@@ -1160,6 +1093,39 @@ impl TheManService {
             }
         }
     }
+
+    async fn handle_platform(&mut self, event: PlatformEvent) {
+        match event {
+            PlatformEvent::NewAudioOutput(id, sender, name) => {
+                info!("NewAudioOutput with id: {id} name: {name}");
+                self.add_input_stream(StreamIN::Audio {
+                    name,
+                    task: Box::pin(std::future::pending()),
+                    sender,
+                });
+            }
+            PlatformEvent::RemovedAudioOutput(id) => todo!(),
+            PlatformEvent::NewAudioInput(id, receiver, name) => {
+                info!("NewAudioInput with id: {id} name: {name}");
+                self.add_output_stream(StreamOUT::Audio {
+                    name,
+                    task: Box::pin(std::future::pending()),
+                    receiver,
+                });
+            }
+            PlatformEvent::RemovedAudioInput(id) => todo!(),
+            PlatformEvent::NewVideoInput(id, receiver, name) => {
+                info!("NewVideoInput with id: {id} name: {name}");
+                self.add_output_stream(StreamOUT::Video {
+                    name,
+                    task: Box::pin(std::future::pending()),
+                    receiver,
+                    last_frame: None,
+                });
+            }
+            PlatformEvent::RemovedVideoInput(id) => todo!(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1170,14 +1136,7 @@ pub struct TheMan {
     message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
     sender: tokio::sync::mpsc::Sender<ServiceRequest>,
 
-    pipewire_handle: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
-    pipewire_sender: ::pipewire::channel::Sender<pipewire::ToPipeWireEvent>,
-
     task: Arc<tokio::task::JoinHandle<()>>,
-
-    proxy_screenshare: Arc<screencast::Screencast<'static>>,
-    session_screenshare:
-        Arc<Mutex<Option<ashpd::desktop::Session<'static, screencast::Screencast<'static>>>>>,
 }
 
 unsafe impl Send for TheMan {}
@@ -1191,9 +1150,6 @@ impl std::fmt::Debug for TheMan {
 
 impl TheMan {
     pub async fn new(name: String, secret_key: SecretKey) -> Self {
-        let (pipewire_sender, pipewire_receiver) = ::pipewire::channel::channel();
-        let pipewire_handle = pipewire::start_pipewire(pipewire_receiver);
-
         let endpoint = iroh::Endpoint::builder()
             .discovery_n0()
             .secret_key(secret_key)
@@ -1223,15 +1179,8 @@ impl TheMan {
             let protocol = protocol.clone();
             let node_id = endpoint.node_id();
             let message_receiver = message_receiver.clone();
-            let pipewire_sender = pipewire_sender.clone();
             tokio::spawn(async move {
-                let mut service = TheManService::new(
-                    protocol,
-                    node_id,
-                    message_receiver,
-                    receiver,
-                    pipewire_sender,
-                );
+                let mut service = TheManService::new(protocol, node_id, message_receiver, receiver);
                 service.setup();
                 service.run().await;
             })
@@ -1252,17 +1201,8 @@ impl TheMan {
             protocol,
             task: Arc::new(task),
 
-            pipewire_handle: Arc::new(Mutex::new(Some(pipewire_handle))),
-            pipewire_sender,
-
             message_receiver,
             sender,
-            proxy_screenshare: Arc::new(
-                screencast::Screencast::new()
-                    .await
-                    .expect("cannot create screenshare session"),
-            ),
-            session_screenshare: Arc::default(),
         }
     }
 
@@ -1480,79 +1420,7 @@ impl TheMan {
     }
 
     pub async fn screen_share(&self) {
-        if let Some(session) = self.session_screenshare.lock().await.take() {
-            _ = self
-                .pipewire_sender
-                .send(pipewire::ToPipeWireEvent::RemoveCore(1));
-            session.close().await;
-        }
-
-        let session = self
-            .proxy_screenshare
-            .create_session()
-            .await
-            .expect("Cannot create screenshare session");
-
-        *self.session_screenshare.lock().await = Some(session);
-
-        let lok = self.session_screenshare.lock().await;
-        let s = lok.as_ref().unwrap();
-
-        if let Ok(_) = self
-            .proxy_screenshare
-            .select_sources(
-                s,
-                screencast::CursorMode::Embedded,
-                screencast::SourceType::Monitor
-                    | screencast::SourceType::Window
-                    | screencast::SourceType::Virtual,
-                true,
-                None,
-                ashpd::desktop::PersistMode::DoNot,
-            )
-            .await
-        {}
-
-        let mut _streams = Vec::default();
-
-        if let Ok(res) = self.proxy_screenshare.start(s, None).await {
-            if let Ok(streams) = res.response() {
-                for stream in streams.streams() {
-                    _streams.push(stream.pipe_wire_node_id());
-                }
-            }
-        }
-
-        if let Ok(fd) = self.proxy_screenshare.open_pipe_wire_remote(s).await {
-            info!("Pipewire FD: {:?}", fd);
-
-            _ = self
-                .pipewire_sender
-                .send(pipewire::ToPipeWireEvent::ConnectTo(fd));
-
-            for stream in _streams {
-                _ = self.sender.send(ServiceRequest::AddVideo(1, stream)).await;
-            }
-        }
-    }
-}
-
-impl Drop for TheMan {
-    fn drop(&mut self) {
-        if Arc::strong_count(&self.pipewire_handle) != 1 {
-            return;
-        }
-
-        info!("sending: pipewire Shutdown");
-
-        _ = self
-            .pipewire_sender
-            .send(pipewire::ToPipeWireEvent::Shutdown);
-        if let Some(pipewire_handle) = self.pipewire_handle.blocking_lock().take() {
-            if !pipewire_handle.is_finished() {
-                _ = pipewire_handle.join();
-            }
-        }
+        _ = self.sender.send(ServiceRequest::ScreenShare).await;
     }
 }
 

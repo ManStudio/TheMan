@@ -1,5 +1,3 @@
-use gui_deps::*;
-
 use std::sync::Arc;
 
 use iroh_blobs::Hash;

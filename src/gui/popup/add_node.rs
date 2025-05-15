@@ -1,5 +1,3 @@
-use gui_deps::*;
-
 use crate::gui::ToHash;
 
 use super::Popup;

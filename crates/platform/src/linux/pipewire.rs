@@ -1,25 +1,15 @@
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    os::fd::{FromRawFd, OwnedFd},
-    rc::Rc,
-    sync::Arc,
-};
-
-use gui_deps::{rand::distributions::uniform::SampleBorrow, *};
+use std::{cell::RefCell, collections::HashMap, os::fd::OwnedFd, rc::Rc, sync::Arc};
 
 use tracing::{error, info, warn};
 
+use crate::{Receiver, Sender};
+
 pub enum ToPipeWireEvent {
-    CreateOutputAuto(i32, tokio::sync::mpsc::UnboundedReceiver<f32>),
-    CreateInputAuto(i32, tokio::sync::mpsc::UnboundedSender<f32>),
+    CreateOutputAuto(i32, Receiver<f32>),
+    CreateInputAuto(i32, Sender<f32>),
     ConnectTo(OwnedFd),
     RemoveCore(i32),
-    CreateVideoStream(
-        i32,
-        u32,
-        tokio::sync::mpsc::UnboundedSender<(u32, u32, Arc<[u8]>)>,
-    ),
+    CreateVideoStream(i32, u32, Sender<(u32, u32, Arc<[u8]>)>),
     Shutdown,
 }
 
@@ -27,16 +17,16 @@ pub struct CoreState {
     core: pipewire::core::Core,
     output_streams: Vec<(
         pipewire::stream::Stream,
-        pipewire::stream::StreamListener<tokio::sync::mpsc::UnboundedReceiver<f32>>,
+        pipewire::stream::StreamListener<Receiver<f32>>,
     )>,
     input_streams: Vec<(
         pipewire::stream::Stream,
-        pipewire::stream::StreamListener<tokio::sync::mpsc::UnboundedSender<f32>>,
+        pipewire::stream::StreamListener<Sender<f32>>,
     )>,
 
     input_video_streams: Vec<(
         pipewire::stream::Stream,
-        pipewire::stream::StreamListener<tokio::sync::mpsc::UnboundedSender<(u32, u32, Arc<[u8]>)>>,
+        pipewire::stream::StreamListener<Sender<(u32, u32, Arc<[u8]>)>>,
     )>,
 }
 
@@ -129,10 +119,7 @@ pub fn start_pipewire(
         .expect("Cannot create pipewire thread")
 }
 
-fn create_input_stream(
-    core_state: &mut CoreState,
-    sample_sender: tokio::sync::mpsc::UnboundedSender<f32>,
-) {
+fn create_input_stream(core_state: &mut CoreState, sample_sender: Sender<f32>) {
     let stream = pipewire::stream::Stream::new(
         &core_state.core,
         "audio-in",
@@ -175,9 +162,7 @@ fn create_input_stream(
                     };
 
                     for sample in data {
-                        if let Err(err) = sender.send(*sample) {
-                            error!("When sending input: {err}");
-                        }
+                        sender.send(*sample);
                     }
                 }
             })
@@ -215,10 +200,7 @@ fn create_input_stream(
     core_state.input_streams.push((stream, stream_listener));
 }
 
-fn create_output_stream(
-    core_state: &mut CoreState,
-    sample_receiver: tokio::sync::mpsc::UnboundedReceiver<f32>,
-) {
+fn create_output_stream(core_state: &mut CoreState, sample_receiver: Receiver<f32>) {
     let Ok(stream) = pipewire::stream::Stream::new(
         &core_state.core,
         "audio-out",
@@ -261,7 +243,7 @@ fn create_output_stream(
                         )
                     };
                     while data.len() > i {
-                        if let Ok(sample) = receiver.try_recv() {
+                        if let Some(sample) = receiver.try_recv() {
                             data[i] = sample;
                             i += 1;
                         } else {
@@ -313,7 +295,7 @@ fn create_output_stream(
 fn create_video_stream(
     core_state: &mut CoreState,
     node_id: u32,
-    sender: tokio::sync::mpsc::UnboundedSender<(u32, u32, Arc<[u8]>)>,
+    sender: Sender<(u32, u32, Arc<[u8]>)>,
 ) {
     let stream = pipewire::stream::Stream::new(
         &core_state.core,

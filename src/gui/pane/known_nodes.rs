@@ -1,5 +1,3 @@
-use gui_deps::*;
-
 use crate::{
     Account,
     gui::{ToHash, component::with_name, popup::PopupAddNode},

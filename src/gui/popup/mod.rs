@@ -1,5 +1,3 @@
-use gui_deps::*;
-
 use eframe::egui;
 
 use crate::Account;

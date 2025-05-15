@@ -5,8 +5,6 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use gui_deps::*;
-
 use chrono::Utc;
 use ed25519::Signature;
 use futures_util::StreamExt;

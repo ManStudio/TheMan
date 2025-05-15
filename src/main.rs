@@ -1,7 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use gui_deps::*;
-
 use iroh::NodeId;
 use iroh_blobs::Hash;
 use serde::{Deserialize, Serialize};

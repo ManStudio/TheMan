@@ -1,5 +1,3 @@
-use gui_deps::*;
-
 use std::collections::BTreeSet;
 
 use the_man::{base64_deserialize, base64_serialize, protocol::Ticket};
