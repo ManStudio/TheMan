@@ -22,12 +22,12 @@ use command::{Command, CommandAuto, CommandData};
 pub enum StreamIN {
     Audio {
         name: String,
-        task: Pin<Box<dyn Future<Output = ()> + Send>>,
+        task: tokio::task::JoinHandle<()>,
         sender: platform::Sender<f32>,
     },
     Video {
         name: String,
-        task: Pin<Box<dyn Future<Output = ()> + Send>>,
+        task: tokio::task::JoinHandle<()>,
         sender: platform::Sender<(u32, u32, Arc<[u8]>)>,
     },
 }
@@ -44,13 +44,13 @@ impl StreamIN {
 pub enum StreamOUT {
     Audio {
         name: String,
-        task: Pin<Box<dyn Future<Output = ()> + Send>>,
+        task: tokio::task::JoinHandle<()>,
         receiver: platform::Receiver<f32>,
     },
 
     Video {
         name: String,
-        task: Pin<Box<dyn Future<Output = ()> + Send>>,
+        task: tokio::task::JoinHandle<()>,
         receiver: platform::Receiver<(u32, u32, Arc<[u8]>)>,
         last_frame: Option<(u32, u32, Arc<[u8]>)>,
     },
@@ -376,7 +376,7 @@ impl TheManService {
                                         base64_serialize(&message.raw.conversation.hash()).unwrap(),
                                         base64_serialize(&message.ticket.owner_id).unwrap()
                                     ),
-                                    task: Box::pin(async move {
+                                    task: tokio::spawn(async move {
                                         loop {
                                             let Some(packet) = preceiver.recv().await else {
                                                 continue;
@@ -594,7 +594,7 @@ impl TheManService {
                         "opus encoder and sender for: {}-{idx}",
                         base64_serialize(&conversation_id).unwrap()
                     ),
-                    task: Box::pin(async move {
+                    task: tokio::spawn(async move {
                         struct DropConversation(ConversationHandle<Store>, u32, u16);
                         impl std::ops::Deref for DropConversation {
                             type Target = ConversationHandle<Store>;
@@ -702,7 +702,7 @@ impl TheManService {
                         "opus encoder and sender for: {}-{idx}",
                         base64_serialize(&conversation_id).unwrap()
                     ),
-                    task: Box::pin(async move {
+                    task: tokio::spawn(async move {
                         struct DropConversation(ProtocolTheMan<Store>, Hash, u32);
 
                         impl Drop for DropConversation {
@@ -789,7 +789,7 @@ impl TheManService {
                         "raw and sender for: {}-{idx}",
                         base64_serialize(&conversation_id).unwrap()
                     ),
-                    task: Box::pin(async move {
+                    task: tokio::spawn(async move {
                         struct DropConversation(ProtocolTheMan<Store>, Hash, u32);
 
                         impl Drop for DropConversation {
@@ -963,7 +963,7 @@ impl TheManService {
                                 base64_serialize(&conversation_id).unwrap(),
                                 base64_serialize(&node_id).unwrap()
                             ),
-                            task: Box::pin(async move {
+                            task: tokio::spawn(async move {
                                 loop {
                                     let Some(packet) = preceiver.recv().await else {
                                         continue;
@@ -1012,7 +1012,7 @@ impl TheManService {
                                 base64_serialize(&conversation_id).unwrap(),
                                 base64_serialize(&node_id).unwrap()
                             ),
-                            task: Box::pin(async move {
+                            task: tokio::spawn(async move {
                                 loop {
                                     let Some(packet) = preceiver.recv().await else {
                                         continue;
@@ -1130,7 +1130,7 @@ impl TheManService {
                 info!("NewAudioOutput with id: {id} name: {name}");
                 self.add_input_stream(StreamIN::Audio {
                     name,
-                    task: Box::pin(std::future::pending()),
+                    task: tokio::spawn(std::future::pending()),
                     sender,
                 });
             }
@@ -1139,7 +1139,7 @@ impl TheManService {
                 info!("NewAudioInput with id: {id} name: {name}");
                 self.add_output_stream(StreamOUT::Audio {
                     name,
-                    task: Box::pin(std::future::pending()),
+                    task: tokio::spawn(std::future::pending()),
                     receiver,
                 });
             }
@@ -1148,7 +1148,7 @@ impl TheManService {
                 info!("NewVideoInput with id: {id} name: {name}");
                 self.add_output_stream(StreamOUT::Video {
                     name,
-                    task: Box::pin(std::future::pending()),
+                    task: tokio::spawn(std::future::pending()),
                     receiver,
                     last_frame: None,
                 });
