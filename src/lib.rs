@@ -5,7 +5,7 @@ use iroh::{NodeId, SecretKey, endpoint::RemoteInfo, protocol::Router};
 pub mod protocol;
 use iroh_blobs::Hash;
 type Store = iroh_blobs::store::fs::Store;
-use media_man::{CodecAudioOpus, CodecAudioRaw, TCodecAudio};
+use media_man::{CodecAudioOpus, CodecAudioRaw, CodecVideoRaw, TCodecAudio, TCodecVideo};
 use platform::PlatformEvent;
 use protocol::{ConversationHandle, Message, RawConversation, TheMan as ProtocolTheMan, Ticket};
 use serde::{Serialize, de::DeserializeOwned};
@@ -107,6 +107,7 @@ struct TheManService {
     platform: Box<dyn platform::TPlatform + Send + Sync + 'static>,
     platform_receiver: platform::Receiver<PlatformEvent>,
     audio_codecs: Vec<Box<dyn TCodecAudio>>,
+    video_codecs: Vec<Box<dyn TCodecVideo>>,
 
     conversations: BTreeMap<Hash, ActiveConversation>,
 
@@ -131,6 +132,9 @@ impl TheManService {
             error!("Cannot load opus!");
         }
 
+        let mut video_codecs = Vec::<Box<dyn TCodecVideo>>::default();
+        video_codecs.push(Box::new(CodecVideoRaw));
+
         let (platform_receiver, platform) =
             platform::init_platform().expect("Cannot create Platform");
 
@@ -143,6 +147,7 @@ impl TheManService {
             platform,
             platform_receiver,
             audio_codecs,
+            video_codecs,
 
             conversations: BTreeMap::default(),
 
@@ -757,15 +762,15 @@ impl TheManService {
             }
 
             ServiceRequest::DirectAddVideoInput(conversation_id, result_sender) => {
-                // let codec = self
-                //     .audio_codecs
-                //     .iter()
-                //     .find(|codec| codec.name() == "opus")
-                //     .expect("Cannot get opus codec");
-                // let encoder_settings = codec
-                //     .default_encoder_settings(media_man::SampleFormat::F32, 48000, 1)
-                //     .unwrap();
-                // let mut encoder = codec.create_encoder(encoder_settings).unwrap();
+                let codec = self
+                    .video_codecs
+                    .iter()
+                    .find(|codec| codec.name() == "video-raw")
+                    .expect("Cannot get video-raw codec");
+                let encoder_settings = codec
+                    .default_encoder_settings(media_man::Format::RGBA)
+                    .unwrap();
+                let mut encoder = codec.create_encoder(encoder_settings).unwrap();
 
                 let (sender, mut receiver) = platform::channel::<(u32, u32, Arc<[u8]>)>();
 
@@ -779,14 +784,14 @@ impl TheManService {
                     .send_stream(protocol::StreamEvent::Start {
                         conversation_id,
                         idx,
-                        codec: String::from("raw"),
+                        codec: String::from("video-raw"),
                         settings: String::default(),
                     })
                     .await;
 
                 let stream = StreamIN::Video {
                     name: format!(
-                        "raw and sender for: {}-{idx}",
+                        "video-raw and sender for: {}-{idx}",
                         base64_serialize(&conversation_id).unwrap()
                     ),
                     task: tokio::spawn(async move {
@@ -814,42 +819,24 @@ impl TheManService {
                                 continue;
                             };
 
-                            let mut buffer = Vec::default();
-
-                            if let Err(err) = bincode::encode_into_std_write(
-                                &frame,
-                                &mut buffer,
-                                bincode::config::standard(),
-                            ) {
-                                error!("Cannot encode frame {err}");
+                            if let Err(err) = encoder.encode(&media_man::FrameVideo {
+                                width: frame.0,
+                                height: frame.1,
+                                format: media_man::Format::RGBA,
+                                data: frame.2,
+                            }) {
+                                error!("video Encode error: {err:?}");
                             }
 
-                            info!("Buffer Size: {}", buffer.len());
-
-                            protocol
-                                .send_stream(protocol::StreamEvent::Play {
-                                    conversation_id: conversation.1,
-                                    idx: conversation.2,
-                                    data: Arc::from(buffer),
-                                })
-                                .await;
-
-                            // if let Err(err) =
-                            //     encoder.encode(&[&media_man::FrameAudio::f32_new(vec![sample])])
-                            // {
-                            //     error!("opus encode: {err:?}");
-                            //     continue;
-                            // }
-
-                            // while let Some(packet) = encoder.get_packet() {
-                            //     protocol
-                            //         .send_stream(protocol::StreamEvent::Play {
-                            //             conversation_id: conversation.1,
-                            //             idx: conversation.2,
-                            //             data: Arc::from(packet.data),
-                            //         })
-                            //         .await;
-                            // }
+                            while let Some(packet) = encoder.get_packet() {
+                                protocol
+                                    .send_stream(protocol::StreamEvent::Play {
+                                        conversation_id: conversation.1,
+                                        idx: conversation.2,
+                                        data: Arc::from(packet.data),
+                                    })
+                                    .await;
+                            }
                         }
                     }),
                     sender,
@@ -994,21 +981,23 @@ impl TheManService {
                     break;
                 }
 
-                if codec_name == "raw" {
-                    // video
+                for video_codec in self.video_codecs.iter() {
+                    if video_codec.name() != *codec_name {
+                        continue;
+                    }
 
                     let (psender, mut preceiver) = channel::<media_man::Packet>();
 
                     let stream = {
-                        // let decoder_settings = audio_codec
-                        //     .default_decoder_settings(media_man::SampleFormat::F32, 48000, 1)
-                        //     .unwrap();
-                        // let mut decoder = audio_codec.create_decoder(decoder_settings).unwrap();
+                        let decoder_settings = video_codec
+                            .default_decoder_settings(media_man::Format::RGBA)
+                            .unwrap();
+                        let mut decoder = video_codec.create_decoder(decoder_settings).unwrap();
                         let (sender, receiver) = platform::channel::<(u32, u32, Arc<[u8]>)>();
 
                         StreamOUT::Video {
                             name: format!(
-                                "raw video and direct receiver for {}-{}-{idx}",
+                                "video-raw and direct receiver for {}-{}-{idx}",
                                 base64_serialize(&conversation_id).unwrap(),
                                 base64_serialize(&node_id).unwrap()
                             ),
@@ -1018,28 +1007,14 @@ impl TheManService {
                                         continue;
                                     };
 
-                                    match bincode::decode_from_slice::<(u32, u32, Arc<[u8]>), _>(
-                                        &packet.data,
-                                        bincode::config::standard(),
-                                    ) {
+                                    match decoder.decode(packet) {
                                         Ok(frame) => {
-                                            sender.send(frame.0);
+                                            sender.send((frame.width, frame.height, frame.data));
                                         }
                                         Err(err) => {
-                                            error!("Cannot decode frame: {err}");
+                                            error!("Cannot decode: {err:?}");
                                         }
                                     }
-
-                                    // match decoder.decode(packet) {
-                                    //     Ok(mut frames) => {
-                                    //         for sample in frames.remove(0).to_f32() {
-                                    //             _ = sender.send(sample);
-                                    //         }
-                                    //     }
-                                    //     Err(err) => {
-                                    //         error!("{err:?} when decoding for {idx}");
-                                    //     }
-                                    // }
                                 }
                             }),
                             receiver,
@@ -1053,6 +1028,7 @@ impl TheManService {
                     let output = conversation.outputs.entry(node_id).or_default();
 
                     output.insert(idx, (psender, id));
+                    break;
                 }
             }
             protocol::StreamEvent::Play {

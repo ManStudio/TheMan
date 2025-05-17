@@ -1,10 +1,16 @@
-use std::{collections::BTreeMap, fmt::Display};
+use std::{collections::BTreeMap, fmt::Display, sync::Arc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SampleFormat {
     I16,
     F32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Format {
+    RGBA,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,6 +224,7 @@ pub enum SettingsError {
     NotSupportedSampleFormat,
     NotSupportedChannels,
     NotSupportedSampleRate,
+    NotSupportedFormat,
     InvalidSettingIndex,
     InvalidValue,
     InvalidSettingsType,
@@ -407,6 +414,14 @@ impl FrameAudio {
 }
 
 #[derive(Debug, Clone)]
+pub struct FrameVideo {
+    pub width: u32,
+    pub height: u32,
+    pub format: Format,
+    pub data: Arc<[u8]>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Packet {
     pub data: Vec<u8>,
 }
@@ -466,4 +481,32 @@ pub trait TCodecAudio: Send + Sync {
         &self,
         settings: Box<dyn TSettings>,
     ) -> Result<Box<dyn TDecoderAudio>, SettingsError>;
+}
+
+pub trait TEncoderVideo: TSettings {
+    fn encode(&mut self, frame: &FrameVideo) -> Result<(), EncodeError>;
+    fn get_packet(&mut self) -> Option<Packet>;
+}
+
+pub trait TDecoderVideo: TSettings {
+    fn decode(&mut self, packet: Packet) -> Result<FrameVideo, DecodeError>;
+}
+
+pub trait TCodecVideo: Send + Sync {
+    fn name(&self) -> String;
+    fn description(&self) -> String;
+
+    fn default_encoder_settings(&self, format: Format)
+        -> Result<Box<dyn TSettings>, SettingsError>;
+    fn create_encoder(
+        &self,
+        settings: Box<dyn TSettings>,
+    ) -> Result<Box<dyn TEncoderVideo>, SettingsError>;
+
+    fn default_decoder_settings(&self, format: Format)
+        -> Result<Box<dyn TSettings>, SettingsError>;
+    fn create_decoder(
+        &self,
+        settings: Box<dyn TSettings>,
+    ) -> Result<Box<dyn TDecoderVideo>, SettingsError>;
 }
