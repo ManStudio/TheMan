@@ -468,6 +468,28 @@ impl Pane for PaneConversation {
 
                                                                         ui.close_menu();
                                                                     }
+                                                                    if ui.small_button("Delete this and all before").clicked(){
+                                                                        let the_man = the_man.clone();
+                                                                        let hash = message.ticket.hash();
+                                                                        let mut messages = vec![hash];
+                                                                        context.add_task(Box::pin(async move {
+                                                                            while !messages.is_empty(){
+                                                                                for hash in std::mem::take(&mut messages){
+                                                                                    if let Some(msg) = the_man.get_message(hash).await{
+                                                                                        if let Some(last) = msg.raw.last{
+                                                                                            messages.push(last.hash());
+                                                                                        }
+                                                                                    }
+
+                                                                                    the_man.message_set_ttl(hash, 1).await;
+                                                                                }
+                                                                            }
+
+                                                                            info!("Deleted all messages before: {}", base64_serialize(&hash).unwrap());
+                                                                        }));
+
+                                                                        ui.close_menu();
+                                                                    }
                                                                     if ui.small_button("Remove TTL").clicked(){
                                                                         let the_man = the_man.clone();
                                                                         let hash = message.ticket.hash();

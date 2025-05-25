@@ -1313,7 +1313,13 @@ impl<S: Store> TheManService<S> {
                     for tail in conversation.tails.iter() {
                         debug!("Sending tail: {}", base64_serialize(&tail.hash).unwrap());
                         let mut buffer = Vec::new();
-                        let msg = self.messages.get(&tail.hash).expect("Cannot send message entry because we don't have the message from the entry");
+                        let Some(msg) = self.messages.get(&tail.hash) else {
+                            error!(
+                                "Cannot send message entry because we don't have the message from the entry: {}",
+                                base64_serialize(&tail.hash).unwrap()
+                            );
+                            continue;
+                        };
                         bincode::encode_into_std_write(
                             Packet::SendMessage(msg.ticket.clone()),
                             &mut buffer,

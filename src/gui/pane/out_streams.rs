@@ -5,12 +5,10 @@ use super::Pane;
 use eframe::egui;
 
 #[derive(Default)]
-pub struct PaneOutStreams {
-    texture: Option<egui::TextureHandle>,
-}
+pub struct PaneOutStreams {}
 
 impl Pane for PaneOutStreams {
-    fn name(&self, account: &crate::Account) -> String {
+    fn name(&self, _account: &crate::Account) -> String {
         String::from("Out Streams")
     }
 
@@ -19,7 +17,7 @@ impl Pane for PaneOutStreams {
         ui: &mut eframe::egui::Ui,
         context: &mut crate::gui::Context,
         the_man: &mut the_man::TheMan,
-        account: &mut crate::Account,
+        _account: &mut crate::Account,
     ) {
         if ui.button("Start Screen Capture").clicked() {
             let the_man = the_man.clone();
@@ -48,33 +46,28 @@ impl Pane for PaneOutStreams {
                             .unwrap_or_else(|| String::from("Unknown"));
                         let connections = the_man.output_stream_connections(id).await;
 
-                        let mut frame = None;
-
-                        if let Some((width, height, bytes)) =
-                            the_man.stream_last_video_frame(id).await
-                        {
-                            let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                                [width as usize, height as usize],
-                                &bytes,
-                            );
-                            let texture = ui.ctx().load_texture(
-                                format!("video_stream: {id}"),
-                                color_image,
-                                egui::TextureOptions::LINEAR,
-                            );
-
-                            frame = Some(texture);
-                        }
+                        let last_frame = the_man.stream_last_video_frame(id).await;
 
                         let mut disconnect_from = None;
                         let mut connect_to = None;
 
                         egui::CollapsingHeader::new(format!("{id}-{name}")).show(ui, |ui| {
-                            if let Some(frame) = frame {
+                            if let Some((width, height, bytes)) = last_frame {
                                 egui::CollapsingHeader::new("Video Preview")
                                     .id_salt(id)
                                     .show(ui, |ui| {
                                         ui.ctx().request_repaint();
+
+                                        let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                            [width as usize, height as usize],
+                                            &bytes,
+                                        );
+                                        let texture = ui.ctx().load_texture(
+                                            format!("video_stream: {id}"),
+                                            color_image,
+                                            egui::TextureOptions::LINEAR,
+                                        );
+
                                         let (rect, _) = ui.allocate_exact_size(
                                             egui::vec2(480., 270.),
                                             egui::Sense::empty(),
@@ -84,7 +77,7 @@ impl Pane for PaneOutStreams {
                                             ui.painter(),
                                             rect,
                                             &egui::ImageOptions::default(),
-                                            &egui::load::SizedTexture::from_handle(&frame),
+                                            &egui::load::SizedTexture::from_handle(&texture),
                                         );
                                     });
                             }

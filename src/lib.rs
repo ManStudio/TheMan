@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, future::Future, pin::Pin, str::FromStr, sync::Arc};
+use std::{collections::BTreeMap, str::FromStr, sync::Arc};
 
 use base64::{Engine as _, prelude::BASE64_URL_SAFE_NO_PAD};
 use iroh::metrics::EndpointMetrics;
@@ -207,11 +207,15 @@ impl TheManService {
             } {
                 match out_stream {
                     StreamOUT::Audio { task, receiver, .. } => {
-                        tasks.push(task);
+                        if !task.is_finished() {
+                            tasks.push(task);
+                        }
                         audio_receivers.push(Box::pin(async { (receiver.recv().await, inputs) }));
                     }
                     StreamOUT::Video { task, receiver, .. } => {
-                        tasks.push(task);
+                        if !task.is_finished() {
+                            tasks.push(task);
+                        }
                         video_receivers
                             .push(Box::pin(async { (receiver.recv().await, inputs, *id) }));
                     }
@@ -220,14 +224,22 @@ impl TheManService {
 
             for (_, in_stream) in self.in_streams.iter_mut() {
                 match in_stream {
-                    StreamIN::Audio { task, .. } => tasks.push(task),
-                    StreamIN::Video { task, .. } => tasks.push(task),
+                    StreamIN::Audio { task, .. } => {
+                        if !task.is_finished() {
+                            tasks.push(task)
+                        }
+                    }
+                    StreamIN::Video { task, .. } => {
+                        if !task.is_finished() {
+                            tasks.push(task)
+                        }
+                    }
                 }
             }
 
             tokio::select! {
                 _ = async { if tasks.is_empty() {std::future::pending().await} else {futures_util::future::select_all(tasks).await}}  => {
-                    panic!("A task that should never finish has finished");
+                    warn!("A task that should never finish has finished");
                 }
                 o_platform_event = self.platform_receiver.recv() => {
                     if let Some(platform_event) = o_platform_event{
@@ -239,7 +251,7 @@ impl TheManService {
                     for input in inputs{
                         if let Some(stream) = self.in_streams.get(input){
                             match stream{
-                                StreamIN::Audio { name, task, sender } => {
+                                StreamIN::Audio { sender, .. } => {
                                      sender.send(sample);
                                 },
                                 StreamIN::Video {..} => {
@@ -254,10 +266,10 @@ impl TheManService {
                         for input in inputs{
                             if let Some(stream) = self.in_streams.get(input){
                                 match stream{
-                                    StreamIN::Audio { ..} => {
+                                    StreamIN::Audio { .. } => {
                                         warn!("Audio Input connected to Video Output");
                                     },
-                                    StreamIN::Video {name, sender, ..} => {
+                                    StreamIN::Video { sender, ..} => {
                                         sender.send(frame.clone());
                                     }
                                 }
@@ -284,27 +296,30 @@ impl TheManService {
                 event = async {
                     message_receiver.await.map(|res|res.clone())
                 } => {
-                    if let Ok(message) = event{
-                        if let Some(message) = message{
+                    match event{
+                        Ok(Some(message)) => {
                             if let Ok(command) = Command::from_str(&message.raw.data) {
                                 self.handle_command(message, command).await;
                             }
-                        }
-                    }else{
-                        static LAST_TIME: Mutex<Option<std::time::Instant>> = Mutex::const_new(None);
-                        let mut last_time = LAST_TIME.lock().await;
-                        let mut show = false;
-                        if let Some(instant) = &*last_time{
-                            if instant.elapsed() > std::time::Duration::from_secs(1){
+                        },
+                        Err(err) => {
+                            static LAST_TIME: Mutex<Option<std::time::Instant>> = Mutex::const_new(None);
+                            let mut last_time = LAST_TIME.lock().await;
+                            let mut show = false;
+                            if let Some(instant) = &*last_time{
+                                if instant.elapsed() > std::time::Duration::from_secs(1){
+                                    show = true;
+                                }
+                            }else{
                                 show = true;
                             }
-                        }else{
-                            show = true;
+                            if show{
+                                error!("Cannot receive message from the the-man service. {err}");
+                                *last_time = Some(std::time::Instant::now());
+                            }
+
                         }
-                        if show{
-                            error!("Cannot receive message from the the-man service.");
-                            *last_time = Some(std::time::Instant::now());
-                        }
+                        _ => {}
                     }
                 }
                 Some(request) = self.receiver.recv() => {
@@ -319,6 +334,11 @@ impl TheManService {
     }
 
     async fn handle_command(&mut self, message: Message, command: Command) {
+        if message.ticket.owner_id == self.node_id {
+            return;
+        }
+
+        info!("Command: {command}");
         match &command {
             Command::Data(command_data) => warn!("Data command is not implemented."),
             Command::Auto(command_auto) => {
@@ -467,7 +487,12 @@ impl TheManService {
                         if let Err(err) = output_stream.0.send(media_man::Packet { data }) {
                             error!("{err} when sending packet {idx}");
                             if let Some((_, id)) = output.remove(idx) {
-                                if let Some(stream) = self.out_streams.remove(&id) {}
+                                if let Some(stream) = self.out_streams.remove(&id) {
+                                    match stream.0 {
+                                        StreamOUT::Audio { task, .. } => task.abort(),
+                                        StreamOUT::Video { task, .. } => task.abort(),
+                                    }
+                                }
                             }
                         }
                     }
@@ -486,7 +511,24 @@ impl TheManService {
                         };
 
                         if let Some((_, id)) = output.remove(idx) {
-                            self.out_streams.remove(&id);
+                            if let Some((stream, _)) = self.out_streams.remove(&id) {
+                                match stream {
+                                    StreamOUT::Audio { task, .. } => task.abort(),
+                                    StreamOUT::Video { task, .. } => task.abort(),
+                                }
+                            } else {
+                                error!(
+                                    "Cannot remove stream from {}-{}:{idx}-{id}",
+                                    base64_serialize(&message.raw.conversation.hash()).unwrap(),
+                                    base64_serialize(&message.ticket.owner_id).unwrap()
+                                );
+                            }
+                        } else {
+                            error!(
+                                "Cannot remove stream from {}-{}:{idx}",
+                                base64_serialize(&message.raw.conversation.hash()).unwrap(),
+                                base64_serialize(&message.ticket.owner_id).unwrap()
+                            );
                         }
                     }
                 }
@@ -861,7 +903,12 @@ impl TheManService {
                     return;
                 };
 
-                _ = self.in_streams.remove(&stream);
+                if let Some(stream) = self.in_streams.remove(&stream) {
+                    match stream {
+                        StreamIN::Audio { task, .. } => task.abort(),
+                        StreamIN::Video { task, .. } => task.abort(),
+                    }
+                }
             }
 
             ServiceRequest::InputStreams(result_sender) => {
