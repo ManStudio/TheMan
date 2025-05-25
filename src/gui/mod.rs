@@ -16,7 +16,9 @@ pub enum Event {
 }
 
 pub mod pane;
-use pane::{Pane, PaneActive, PaneConversations, PaneKnownNodes, PaneOutStreams, PaneStatus};
+use pane::{
+    Pane, PaneActive, PaneConversations, PaneKnownNodes, PaneMetrics, PaneOutStreams, PaneStatus,
+};
 
 pub mod popup;
 
@@ -140,10 +142,12 @@ impl Dashboard {
         let active = tiles.insert_pane(Box::new(PaneActive::default()));
         let out_streams = tiles.insert_pane(Box::new(PaneOutStreams::default()));
         let status = tiles.insert_pane(Box::new(PaneStatus::default()));
+        let metrics = tiles.insert_pane(Box::new(PaneMetrics::default()));
 
         let welcome = tiles.insert_pane(Box::new(String::from("Welcome")));
 
-        let left_top = tiles.insert_tab_tile(vec![conversations, known, active, out_streams]);
+        let left_top =
+            tiles.insert_tab_tile(vec![conversations, known, active, metrics, out_streams]);
 
         let left = tiles.insert_vertical_tile(vec![left_top, status]);
         if let Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(liniar))) =

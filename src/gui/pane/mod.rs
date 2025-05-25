@@ -6,6 +6,7 @@ mod active;
 mod conversation;
 mod conversations;
 mod known_nodes;
+mod metrics;
 mod out_streams;
 mod status;
 
@@ -13,6 +14,7 @@ pub use active::PaneActive;
 pub use conversation::PaneConversation;
 pub use conversations::PaneConversations;
 pub use known_nodes::PaneKnownNodes;
+pub use metrics::PaneMetrics;
 pub use out_streams::PaneOutStreams;
 pub use status::PaneStatus;
 

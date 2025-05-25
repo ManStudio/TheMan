@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, future::Future, pin::Pin, str::FromStr, sync::Arc};
 
 use base64::{Engine as _, prelude::BASE64_URL_SAFE_NO_PAD};
+use iroh::metrics::EndpointMetrics;
 use iroh::{NodeId, SecretKey, endpoint::RemoteInfo, protocol::Router};
 pub mod protocol;
 use iroh_blobs::Hash;
@@ -1199,9 +1200,7 @@ impl TheMan {
             .accept(iroh_gossip::ALPN, gossip.clone())
             .accept(iroh_blobs::ALPN, blobs.clone())
             .accept(protocol::ALPN, protocol.clone())
-            .spawn()
-            .await
-            .unwrap();
+            .spawn();
 
         TheMan {
             node,
@@ -1417,6 +1416,10 @@ impl TheMan {
 
     pub fn remote_infos(&self) -> Vec<RemoteInfo> {
         self.node.endpoint().remote_info_iter().collect()
+    }
+
+    pub fn metrics(&self) -> &EndpointMetrics {
+        self.node.endpoint().metrics()
     }
 
     pub async fn connect(&self, node_id: NodeId) {

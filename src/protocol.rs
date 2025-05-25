@@ -832,8 +832,6 @@ impl<S: Store> TheManService<S> {
                                 pos += len;
                                 let mut packets = Vec::default();
 
-                                info!("Received: {len} has pos: {pos}");
-
                                 loop {
                                     match bincode::decode_from_slice::<Packet, _>(
                                         &buffer[..pos],
