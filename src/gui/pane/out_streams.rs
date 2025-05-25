@@ -74,6 +74,7 @@ impl Pane for PaneOutStreams {
                                 egui::CollapsingHeader::new("Video Preview")
                                     .id_salt(id)
                                     .show(ui, |ui| {
+                                        ui.ctx().request_repaint();
                                         let (rect, _) = ui.allocate_exact_size(
                                             egui::vec2(480., 270.),
                                             egui::Sense::empty(),

@@ -102,7 +102,9 @@ impl TEncoderVideo for VideoEncoder {
     }
 }
 
-struct VideoDecoder;
+struct VideoDecoder {
+    frames: VecDeque<FrameVideo>,
+}
 
 impl TSettings for VideoDecoder {
     fn get_settings_len(&self) -> usize {
@@ -123,19 +125,26 @@ impl TSettings for VideoDecoder {
 }
 
 impl TDecoderVideo for VideoDecoder {
-    fn decode(&mut self, packet: Packet) -> Result<FrameVideo, DecodeError> {
+    fn decode(&mut self, packet: Packet) -> Result<(), DecodeError> {
         match bincode::decode_from_slice::<RawVideoFrame, _>(
             &packet.data,
             bincode::config::standard(),
         ) {
-            Ok((frame, _)) => Ok(FrameVideo {
-                width: frame.width,
-                height: frame.height,
-                format: Format::RGBA,
-                data: frame.data,
-            }),
+            Ok((frame, _)) => {
+                self.frames.push_back(FrameVideo {
+                    width: frame.width,
+                    height: frame.height,
+                    format: Format::RGBA,
+                    data: frame.data,
+                });
+                Ok(())
+            }
             Err(err) => Err(DecodeError::Custom(format!("Cannot decode: {err}"))),
         }
+    }
+
+    fn get_frame(&mut self) -> Option<FrameVideo> {
+        self.frames.pop_front()
     }
 }
 
@@ -185,7 +194,9 @@ impl TCodecVideo for CodecVideoRaw {
         settings: Box<dyn media_man_core::TSettings>,
     ) -> Result<Box<dyn media_man_core::TDecoderVideo>, SettingsError> {
         match (settings as Box<dyn Any>).downcast::<VideoDecoderSettings>() {
-            Ok(_) => Ok(Box::new(VideoDecoder)),
+            Ok(_) => Ok(Box::new(VideoDecoder {
+                frames: VecDeque::default(),
+            })),
             Err(_) => Err(SettingsError::InvalidSettingsType),
         }
     }

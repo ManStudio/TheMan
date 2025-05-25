@@ -8,3 +8,6 @@ pub use media_man_codec_raw::CodecAudioRaw;
 
 #[cfg(feature = "codec-raw")]
 pub use media_man_codec_raw::CodecVideoRaw;
+
+#[cfg(feature = "codec-hevc")]
+pub use media_man_codec_hevc::CodecVideoHEVC;

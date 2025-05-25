@@ -5,7 +5,9 @@ use iroh::{NodeId, SecretKey, endpoint::RemoteInfo, protocol::Router};
 pub mod protocol;
 use iroh_blobs::Hash;
 type Store = iroh_blobs::store::fs::Store;
-use media_man::{CodecAudioOpus, CodecAudioRaw, CodecVideoRaw, TCodecAudio, TCodecVideo};
+use media_man::{
+    CodecAudioOpus, CodecAudioRaw, CodecVideoHEVC, CodecVideoRaw, TCodecAudio, TCodecVideo,
+};
 use platform::PlatformEvent;
 use protocol::{ConversationHandle, Message, RawConversation, TheMan as ProtocolTheMan, Ticket};
 use serde::{Serialize, de::DeserializeOwned};
@@ -134,6 +136,7 @@ impl TheManService {
 
         let mut video_codecs = Vec::<Box<dyn TCodecVideo>>::default();
         video_codecs.push(Box::new(CodecVideoRaw));
+        video_codecs.push(Box::new(CodecVideoHEVC));
 
         let (platform_receiver, platform) =
             platform::init_platform().expect("Cannot create Platform");
@@ -765,8 +768,8 @@ impl TheManService {
                 let codec = self
                     .video_codecs
                     .iter()
-                    .find(|codec| codec.name() == "video-raw")
-                    .expect("Cannot get video-raw codec");
+                    .find(|codec| codec.name() == "hevc")
+                    .expect("Cannot get hevc codec");
                 let encoder_settings = codec
                     .default_encoder_settings(media_man::Format::RGBA)
                     .unwrap();
@@ -784,14 +787,14 @@ impl TheManService {
                     .send_stream(protocol::StreamEvent::Start {
                         conversation_id,
                         idx,
-                        codec: String::from("video-raw"),
+                        codec: String::from("hevc"),
                         settings: String::default(),
                     })
                     .await;
 
                 let stream = StreamIN::Video {
                     name: format!(
-                        "video-raw and sender for: {}-{idx}",
+                        "hevc and sender for: {}-{idx}",
                         base64_serialize(&conversation_id).unwrap()
                     ),
                     task: tokio::spawn(async move {
@@ -997,7 +1000,7 @@ impl TheManService {
 
                         StreamOUT::Video {
                             name: format!(
-                                "video-raw and direct receiver for {}-{}-{idx}",
+                                "hevc and direct receiver for {}-{}-{idx}",
                                 base64_serialize(&conversation_id).unwrap(),
                                 base64_serialize(&node_id).unwrap()
                             ),
@@ -1007,13 +1010,12 @@ impl TheManService {
                                         continue;
                                     };
 
-                                    match decoder.decode(packet) {
-                                        Ok(frame) => {
-                                            sender.send((frame.width, frame.height, frame.data));
-                                        }
-                                        Err(err) => {
-                                            error!("Cannot decode: {err:?}");
-                                        }
+                                    if let Err(err) = decoder.decode(packet) {
+                                        error!("Cannot decode: {err:?}");
+                                    }
+
+                                    if let Some(frame) = decoder.get_frame() {
+                                        sender.send((frame.width, frame.height, frame.data));
                                     }
                                 }
                             }),

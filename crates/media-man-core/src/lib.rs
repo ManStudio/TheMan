@@ -489,7 +489,8 @@ pub trait TEncoderVideo: TSettings {
 }
 
 pub trait TDecoderVideo: TSettings {
-    fn decode(&mut self, packet: Packet) -> Result<FrameVideo, DecodeError>;
+    fn decode(&mut self, packet: Packet) -> Result<(), DecodeError>;
+    fn get_frame(&mut self) -> Option<FrameVideo>;
 }
 
 pub trait TCodecVideo: Send + Sync {

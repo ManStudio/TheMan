@@ -6,9 +6,11 @@ edition = "2021"
 [features]
 codec-opus = ["dep:media-man-codec-opus"]
 codec-raw = ["dep:media-man-codec-raw"]
+codec-hevc = ["dep:media-man-codec-hevc"]
 
 [dependencies]
 media-man-core = {path = "../media-man-core"}
 
 media-man-codec-opus = { path = "../media-man-codec-opus", optional = true}
 media-man-codec-raw = { path = "../media-man-codec-raw", optional = true}
+media-man-codec-hevc = { path = "../media-man-codec-hevc", optional = true}
