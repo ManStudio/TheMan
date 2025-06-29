@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use iroh::NodeId;
 use iroh_blobs::Hash;
 use serde::{Deserialize, Serialize};
-use tracing::error;
+use tracing::{error, instrument::WithSubscriber};
+use tracing_subscriber::{Layer, layer::SubscriberExt as _, util::SubscriberInitExt};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Account {
@@ -46,13 +47,16 @@ impl Data {
 mod gui;
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("the_man=trace".parse().unwrap()),
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_file(true)
+                .with_line_number(true)
+                .with_filter(
+                    tracing_subscriber::EnvFilter::from_default_env()
+                        .add_directive("the_man=trace".parse().unwrap()),
+                ),
         )
-        .with_file(true)
-        .with_line_number(true)
         .init();
 
     let data = Data::load();

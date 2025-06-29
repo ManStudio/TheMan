@@ -11,10 +11,10 @@ use futures_util::StreamExt;
 use iroh::{
     Endpoint, NodeId, SecretKey,
     endpoint::{Connection, RecvStream, SendStream},
-    protocol::ProtocolHandler,
+    protocol::{AcceptError, ProtocolHandler},
 };
 use iroh_blobs::{
-    BlobFormat, Hash, HashAndFormat, downloader::DownloadRequest, net_protocol::Blobs, store::Store,
+    BlobFormat, Hash, HashAndFormat, api::downloader::DownloadRequest, net_protocol::Blobs,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{
@@ -22,7 +22,7 @@ use tokio::sync::{
     mpsc::{Receiver, Sender, UnboundedSender},
     oneshot, watch,
 };
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, info_span, trace, warn};
 
 pub type Time = chrono::DateTime<chrono::Utc>;
 
@@ -431,12 +431,9 @@ pub enum LazyData {
 }
 
 impl LazyData {
-    pub async fn get<S: iroh_blobs::store::Store>(
-        &mut self,
-        blobs: &iroh_blobs::net_protocol::Blobs<S>,
-    ) -> Option<Arc<[u8]>> {
+    pub async fn get(&mut self, blobs: &iroh_blobs::net_protocol::Blobs) -> Option<Arc<[u8]>> {
         match self {
-            LazyData::ToLoad(ticket) => match blobs.client().read_to_bytes(ticket.hash()).await {
+            LazyData::ToLoad(ticket) => match blobs.store().get_bytes(ticket.hash()).await {
                 Ok(data) => {
                     let Ok((signed, _len)) =
                         bincode::decode_from_slice::<Signed, _>(&data, bincode::config::legacy())
@@ -498,7 +495,7 @@ struct Conn {
     receiver: Pin<Box<dyn futures_util::Stream<Item = Vec<Packet>> + Send + Sync>>,
 }
 
-struct TheManService<S: Store> {
+struct TheManService {
     messages_to_resolv: Vec<Ticket>,
     conversations_to_resolv: Vec<Ticket>,
     datas_to_resolv: Vec<Ticket>,
@@ -506,8 +503,8 @@ struct TheManService<S: Store> {
     connections: BTreeMap<NodeId, Conn>,
     message_sender: watch::Sender<Option<Message>>,
     receiver: Receiver<ServiceRequest>,
-    downloader: iroh_blobs::downloader::Downloader,
-    blobs: iroh_blobs::net_protocol::Blobs<S>,
+    downloader: iroh_blobs::api::downloader::Downloader,
+    blobs: iroh_blobs::net_protocol::Blobs,
     endpoint: iroh::Endpoint,
 
     messages: BTreeMap<Hash, Message>,
@@ -523,13 +520,8 @@ struct TheManService<S: Store> {
     stream_senders: Vec<UnboundedSender<(NodeId, StreamEvent)>>,
 }
 
-impl<S: Store> TheManService<S> {
+impl TheManService {
     pub async fn run(&mut self) {
-        _ = self.blobs.start_gc(iroh_blobs::store::GcConfig {
-            period: std::time::Duration::from_secs(60),
-            done_callback: Some(Box::new(|| debug!("blobs GC finished!"))),
-        });
-
         for ticket in std::mem::take(&mut self.datas_to_resolv) {
             if ticket.ttl != 0 {
                 self.tickets_to_delete
@@ -591,7 +583,8 @@ impl<S: Store> TheManService<S> {
 
                 self.blobs
                     .store()
-                    .set_tag(tag_conversation(&ticket), ticket.hash_and_format)
+                    .tags()
+                    .set(tag_conversation(&ticket), ticket.hash_and_format)
                     .await
                     .unwrap();
 
@@ -643,7 +636,8 @@ impl<S: Store> TheManService<S> {
 
                 self.blobs
                     .store()
-                    .set_tag(tag_message(&ticket), ticket.hash_and_format)
+                    .tags()
+                    .set(tag_message(&ticket), ticket.hash_and_format)
                     .await
                     .unwrap();
 
@@ -680,7 +674,7 @@ impl<S: Store> TheManService<S> {
                         base64_serialize(&raw.conversation.hash()).unwrap(),
                         base64_serialize(&ticket).unwrap()
                     );
-                    _ = self.blobs.client().delete_blob(ticket.hash()).await;
+                    _ = self.blobs.store().delete([ticket.hash()]).await;
                     continue;
                 }
 
@@ -712,24 +706,24 @@ impl<S: Store> TheManService<S> {
     }
 
     pub async fn download(&self, ticket: &Ticket) -> Option<bytes::Bytes> {
+        let now = std::time::Instant::now();
+
         let handle = self
             .downloader
-            .queue(DownloadRequest::new(
+            .download_with_opts(DownloadRequest::new(
                 HashAndFormat::new(ticket.hash(), ticket.format()),
                 ticket.providers().copied().collect::<Vec<_>>(),
+                iroh_blobs::api::downloader::SplitStrategy::None,
             ))
             .await;
 
         info!("Downloading: {}", base64_serialize(&ticket.hash()).unwrap());
-        match handle.await {
-            Ok(stats) => {
+        match handle {
+            Ok(_) => {
                 info!(
-                    "Downloaded: {}, in time: {:?}, Bytes Written: {}, Bytes Readed: {} Speed: {} MBs",
+                    "Downloaded: {}, in time: {:0.2}",
                     base64_serialize(&ticket.hash()).unwrap(),
-                    stats.elapsed,
-                    stats.bytes_written,
-                    stats.bytes_read,
-                    stats.mbits()
+                    now.elapsed().as_secs_f32()
                 );
             }
             Err(err) => {
@@ -740,41 +734,26 @@ impl<S: Store> TheManService<S> {
             }
         }
 
-        let status = self.blobs.client().status(ticket.hash()).await.unwrap();
+        let status = self.blobs.store().status(ticket.hash()).await.unwrap();
 
         match status {
-            iroh_blobs::rpc::client::blobs::BlobStatus::Complete { size } => {
+            iroh_blobs::api::blobs::BlobStatus::Complete { size } => {
                 println!("Blob with size: {size}");
 
-                Some(
-                    self.blobs
-                        .client()
-                        .read_to_bytes(ticket.hash())
-                        .await
-                        .unwrap(),
-                )
+                Some(self.blobs.store().get_bytes(ticket.hash()).await.unwrap())
             }
             _ => None,
         }
     }
 
     async fn get_signed_data(&self, ticket: &Ticket) -> Option<Vec<u8>> {
-        let status = self
-            .blobs
-            .store()
-            .entry_status(&ticket.hash())
-            .await
-            .unwrap();
+        let status = self.blobs.store().status(ticket.hash()).await.unwrap();
         let bytes = match status {
-            iroh_blobs::store::EntryStatus::Complete => self
-                .blobs
-                .client()
-                .read_to_bytes(ticket.hash())
-                .await
-                .unwrap(),
-            iroh_blobs::store::EntryStatus::Partial | iroh_blobs::store::EntryStatus::NotFound => {
-                self.download(ticket).await?
+            iroh_blobs::api::blobs::BlobStatus::Complete { .. } => {
+                self.blobs.store().get_bytes(ticket.hash()).await.unwrap()
             }
+            iroh_blobs::api::blobs::BlobStatus::Partial { .. }
+            | iroh_blobs::api::blobs::BlobStatus::NotFound => self.download(ticket).await?,
         };
 
         let Ok(signed) = bincode::decode_from_slice::<Signed, _>(&bytes, bincode::config::legacy())
@@ -804,6 +783,7 @@ impl<S: Store> TheManService<S> {
         request: ServiceRequest,
         messages_to_add: &mut Vec<Ticket>,
     ) {
+        info_span!("handle_request");
         match request {
             ServiceRequest::Add(connection, (mut sender, receiver)) => {
                 let node_id = connection
@@ -901,13 +881,7 @@ impl<S: Store> TheManService<S> {
                 let bytes =
                     bincode::encode_to_vec(&raw_conversation, bincode::config::legacy()).unwrap();
 
-                let Ok(node_addr) = self.endpoint.node_addr().await else {
-                    error!("Cannot get the node_addr");
-                    if sender.send(None).is_err() {
-                        error!("Cannot send");
-                    }
-                    return;
-                };
+                let node_id = self.blobs.endpoint().node_id();
 
                 let bytes = bincode::encode_to_vec(
                     Signed::new(self.endpoint.secret_key(), bytes),
@@ -915,7 +889,7 @@ impl<S: Store> TheManService<S> {
                 )
                 .unwrap();
 
-                let Ok(res) = self.blobs.client().add_bytes_named(bytes, tag_tmp()).await else {
+                let Ok(res) = self.blobs.store().add_bytes(bytes).await else {
                     error!("Cannot add bytes");
                     if sender.send(None).is_err() {
                         error!("Cannot send");
@@ -924,7 +898,7 @@ impl<S: Store> TheManService<S> {
                 };
 
                 let ticket = Ticket {
-                    owner_id: node_addr.node_id,
+                    owner_id: node_id,
                     hash_and_format: HashAndFormat {
                         hash: res.hash,
                         format: res.format,
@@ -934,11 +908,10 @@ impl<S: Store> TheManService<S> {
 
                 self.blobs
                     .store()
-                    .set_tag(tag_conversation(&ticket), ticket.hash_and_format)
+                    .tags()
+                    .set(tag_conversation(&ticket), ticket.hash_and_format)
                     .await
                     .unwrap();
-
-                _ = self.blobs.store().delete_tag(tag_tmp()).await;
 
                 self.conversations.insert(
                     ticket.hash(),
@@ -1019,8 +992,8 @@ impl<S: Store> TheManService<S> {
 
                 let Ok(res) = self
                     .blobs
-                    .client()
-                    .add_bytes_named(bytes, tag_tmp())
+                    .store()
+                    .add_bytes(bytes)
                     .await
                     .map_err(|err| error!("{err}: Cannot add message as blob"))
                 else {
@@ -1041,11 +1014,11 @@ impl<S: Store> TheManService<S> {
 
                 self.blobs
                     .store()
-                    .set_tag(tag_message(&ticket), ticket.hash_and_format)
+                    .tags()
+                    .set(tag_message(&ticket), ticket.hash_and_format)
                     .await
                     .unwrap();
-
-                _ = self.blobs.store().delete_tag(tag_tmp()).await;
+                _ = self.blobs.store().tags().delete(res.name).await;
 
                 if ticket.ttl != 0 {
                     self.tickets_to_delete
@@ -1132,8 +1105,8 @@ impl<S: Store> TheManService<S> {
                 let arc: Arc<[u8]> = data.clone().into();
                 let res = self
                     .blobs
-                    .client()
-                    .add_bytes_named(data, tag_tmp())
+                    .store()
+                    .add_bytes(data)
                     .await
                     .expect("Cannot add to store");
 
@@ -1157,7 +1130,8 @@ impl<S: Store> TheManService<S> {
                 if let Err(err) = self
                     .blobs
                     .store()
-                    .set_tag(tag_data(&ticket), ticket.hash_and_format)
+                    .tags()
+                    .set(tag_data(&ticket), ticket.hash_and_format)
                     .await
                 {
                     error!(
@@ -1167,8 +1141,7 @@ impl<S: Store> TheManService<S> {
                 } else {
                     _ = sender.send(ticket);
                 }
-
-                _ = self.blobs.store().delete_tag(tag_tmp()).await;
+                _ = self.blobs.store().tags().delete(res.name).await;
             }
 
             ServiceRequest::SetTTL(f, hash, ttl) => {
@@ -1178,29 +1151,39 @@ impl<S: Store> TheManService<S> {
                 match f {
                     TicketFor::Data => {
                         if let Some(lazy) = self.datas.get_mut(&hash) {
+                            let last_ticket = lazy.ticket().clone();
                             let ticket = lazy.ticket();
-                            _ = self.blobs.store().delete_tag(tag_data(ticket)).await;
                             ticket.ttl = ttl;
                             _ = self
                                 .blobs
                                 .store()
-                                .set_tag(tag_data(ticket), ticket.hash_and_format)
+                                .tags()
+                                .set(tag_data(ticket), ticket.hash_and_format)
+                                .await;
+                            _ = self
+                                .blobs
+                                .store()
+                                .tags()
+                                .delete(tag_data(&last_ticket))
                                 .await;
                             self.tickets_to_delete.insert(hash, f);
                         }
                     }
                     TicketFor::Message => {
                         if let Some(msg) = self.messages.get_mut(&hash) {
-                            _ = self
-                                .blobs
-                                .store()
-                                .delete_tag(tag_message(&msg.ticket))
-                                .await;
+                            let last_ticket = msg.ticket.clone();
                             msg.ticket.ttl = ttl;
                             _ = self
                                 .blobs
                                 .store()
-                                .set_tag(tag_message(&msg.ticket), msg.ticket.hash_and_format)
+                                .tags()
+                                .set(tag_message(&msg.ticket), msg.ticket.hash_and_format)
+                                .await;
+                            _ = self
+                                .blobs
+                                .store()
+                                .tags()
+                                .delete(tag_message(&last_ticket))
                                 .await;
                             self.tickets_to_delete.insert(hash, f);
                         }
@@ -1292,6 +1275,7 @@ impl<S: Store> TheManService<S> {
         packet: Packet,
         messages_to_add: &mut Vec<Ticket>,
     ) {
+        tracing::info_span!("handle_packet", from = base64_serialize(&node_id).unwrap());
         match packet {
             Packet::Welcome => {
                 debug!("Welcome from: {}", base64_serialize(&node_id).unwrap());
@@ -1410,6 +1394,8 @@ impl<S: Store> TheManService<S> {
     }
 
     pub async fn handle_tick(&mut self) {
+        tracing::info_span!("handle_tick");
+
         trace!("To Delete Tick");
 
         let mut to_remove = Vec::default();
@@ -1437,7 +1423,7 @@ impl<S: Store> TheManService<S> {
 
             match f {
                 TicketFor::Data => {
-                    if let Err(err) = self.blobs.store().delete_tag(tag_data(ticket)).await {
+                    if let Err(err) = self.blobs.store().tags().delete(tag_data(ticket)).await {
                         error!(
                             "Cannot delete data: {err}, {}",
                             base64_serialize(&hash).unwrap()
@@ -1447,7 +1433,7 @@ impl<S: Store> TheManService<S> {
                     }
                 }
                 TicketFor::Message => {
-                    if let Err(err) = self.blobs.store().delete_tag(tag_message(ticket)).await {
+                    if let Err(err) = self.blobs.store().tags().delete(tag_message(ticket)).await {
                         error!(
                             "Cannot delete message: {err}, {}",
                             base64_serialize(&hash).unwrap()
@@ -1471,7 +1457,8 @@ impl<S: Store> TheManService<S> {
                     if let Err(err) = self
                         .blobs
                         .store()
-                        .delete_tag(tag_data(&Ticket {
+                        .tags()
+                        .delete(tag_data(&Ticket {
                             ttl: ticket.ttl + 1,
                             ..ticket.clone()
                         }))
@@ -1484,7 +1471,8 @@ impl<S: Store> TheManService<S> {
                     } else if let Err(err) = self
                         .blobs
                         .store()
-                        .set_tag(tag_data(ticket), ticket.hash_and_format)
+                        .tags()
+                        .set(tag_data(ticket), ticket.hash_and_format)
                         .await
                     {
                         error!(
@@ -1498,7 +1486,8 @@ impl<S: Store> TheManService<S> {
                     if let Err(err) = self
                         .blobs
                         .store()
-                        .delete_tag(tag_message(&Ticket {
+                        .tags()
+                        .delete(tag_message(&Ticket {
                             ttl: ticket.ttl + 1,
                             ..ticket.clone()
                         }))
@@ -1511,7 +1500,8 @@ impl<S: Store> TheManService<S> {
                     } else if let Err(err) = self
                         .blobs
                         .store()
-                        .set_tag(tag_message(ticket), ticket.hash_and_format)
+                        .tags()
+                        .set(tag_message(ticket), ticket.hash_and_format)
                         .await
                     {
                         error!(
@@ -1526,13 +1516,13 @@ impl<S: Store> TheManService<S> {
 }
 
 #[derive(Clone)]
-pub struct ConversationHandle<S: Store> {
-    inner: Arc<Inner<S>>,
+pub struct ConversationHandle {
+    inner: Arc<Inner>,
     conversation: Hash,
     last: Option<Ticket>,
 }
 
-impl<S: Store> ConversationHandle<S> {
+impl ConversationHandle {
     pub fn hash(&self) -> &Hash {
         &self.conversation
     }
@@ -1623,13 +1613,13 @@ impl<S: Store> ConversationHandle<S> {
 }
 
 #[derive(Debug)]
-struct Inner<S: Store> {
+struct Inner {
     pub sender: RwLock<Option<Sender<ServiceRequest>>>,
     #[allow(unused)]
-    pub blobs: Blobs<S>,
+    pub blobs: Blobs,
 }
 
-impl<S: Store> Inner<S> {
+impl Inner {
     async fn send_request(&self, request: ServiceRequest) {
         let Some(sender) = &*self.sender.read().await else {
             error!("Cannot grab sender");
@@ -1643,15 +1633,15 @@ impl<S: Store> Inner<S> {
 }
 
 #[derive(Debug, Clone)]
-pub struct TheMan<S: Store> {
-    inner: Arc<Inner<S>>,
+pub struct TheMan {
+    inner: Arc<Inner>,
     endpoint: Endpoint,
     task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
-impl<S: Store> TheMan<S> {
+impl TheMan {
     pub async fn spawn(
-        blobs: Blobs<S>,
+        blobs: Blobs,
         endpoint: Endpoint,
         message_sender: watch::Sender<Option<Message>>,
     ) -> Self {
@@ -1659,31 +1649,36 @@ impl<S: Store> TheMan<S> {
         let mut conversations_to_resolv = Vec::new();
         let mut datas_to_resolv = Vec::new();
 
-        for tag in blobs.store().tags(None, None).await.unwrap() {
-            let Ok(tag) = tag else {
-                continue;
-            };
+        let mut tags = blobs.store().tags().list().await.unwrap();
 
-            debug!("TAG: {:?}", tag.0.0);
+        while let Some(Ok(tag)) = tags.next().await {
+            debug!("TAG: {:?}", tag.name.0);
 
-            if tag.0.0.starts_with(b"message/") {
-                let ticket_data = tag.0.0.strip_prefix(b"message/").unwrap();
+            if tag.name.0.starts_with(b"message/") {
+                let ticket_data = tag.name.0.strip_prefix(b"message/").unwrap();
                 let ticket = base64_deserialize::<Ticket>(ticket_data).expect("Cannot deserialize");
                 messages_to_resolv.push(ticket);
                 continue;
             }
 
-            if tag.0.0.starts_with(b"conversation/") {
-                let ticket_data = tag.0.0.strip_prefix(b"conversation/").unwrap();
+            if tag.name.0.starts_with(b"conversation/") {
+                let ticket_data = tag.name.0.strip_prefix(b"conversation/").unwrap();
                 let ticket = base64_deserialize::<Ticket>(ticket_data).expect("Cannot deserialize");
                 conversations_to_resolv.push(ticket);
                 continue;
             }
 
-            if tag.0.0.starts_with(b"data/") {
-                let ticket_data = tag.0.0.strip_prefix(b"data/").unwrap();
+            if tag.name.0.starts_with(b"data/") {
+                let ticket_data = tag.name.0.strip_prefix(b"data/").unwrap();
                 let ticket = base64_deserialize::<Ticket>(ticket_data).expect("Cannot deserialize");
                 datas_to_resolv.push(ticket);
+                continue;
+            }
+
+            if tag.name.0.starts_with(b"auto-") {
+                warn!("Temp Tag detected!!!");
+                _ = blobs.store().tags().delete(tag.name.0).await;
+
                 continue;
             }
         }
@@ -1699,7 +1694,7 @@ impl<S: Store> TheMan<S> {
                     conversations_to_resolv,
                     datas_to_resolv,
                     receiver,
-                    downloader: blobs.downloader().clone(),
+                    downloader: blobs.store().downloader(&endpoint).clone(),
                     messages: BTreeMap::default(),
                     conversations: BTreeMap::default(),
                     endpoint,
@@ -1729,7 +1724,7 @@ impl<S: Store> TheMan<S> {
         }
     }
 
-    pub async fn create(&self, raw: RawConversation) -> Option<ConversationHandle<S>> {
+    pub async fn create(&self, raw: RawConversation) -> Option<ConversationHandle> {
         let (s, r) = oneshot::channel();
         self.inner
             .send_request(ServiceRequest::Create(raw, s))
@@ -1749,7 +1744,7 @@ impl<S: Store> TheMan<S> {
         r.await.ok()
     }
 
-    pub async fn conversations(&self) -> Option<Vec<ConversationHandle<S>>> {
+    pub async fn conversations(&self) -> Option<Vec<ConversationHandle>> {
         Some(
             self.raw_conversations()
                 .await?
@@ -1763,7 +1758,7 @@ impl<S: Store> TheMan<S> {
         )
     }
 
-    pub async fn get_conversation(&self, hash: Hash) -> Option<ConversationHandle<S>> {
+    pub async fn get_conversation(&self, hash: Hash) -> Option<ConversationHandle> {
         let (s, r) = oneshot::channel();
         self.inner
             .send_request(ServiceRequest::GetConversation(hash, s))
@@ -1867,49 +1862,40 @@ impl<S: Store> TheMan<S> {
     }
 }
 
-impl<S: Store> ProtocolHandler for TheMan<S> {
-    fn accept(
-        &self,
-        connection: iroh::endpoint::Connection,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>> {
+impl ProtocolHandler for TheMan {
+    async fn accept(&self, connection: iroh::endpoint::Connection) -> Result<(), AcceptError> {
         let inner = self.inner.clone();
-        Box::pin(async move {
-            let bi = connection
-                .accept_bi()
-                .await
-                .inspect_err(|err| error!("Channel Fail: {err}"))?;
-            inner
-                .send_request(ServiceRequest::Add(connection, bi))
-                .await;
+        let bi = connection
+            .accept_bi()
+            .await
+            .inspect_err(|err| error!("Channel Fail: {err}"))?;
+        inner
+            .send_request(ServiceRequest::Add(connection, bi))
+            .await;
 
-            Ok(())
-        })
+        Ok(())
     }
 
-    fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
+    fn shutdown(&self) -> impl Future<Output = ()> {
         let inner = self.inner.clone();
         let task = self.task.clone();
-        Box::pin(async move {
+        async move {
             inner.sender.write().await.take();
             if let Some(task) = task.lock().await.take() {
                 _ = task.await;
             }
-        })
+        }
     }
 }
 
-fn tag_conversation(ticket: &Ticket) -> iroh_blobs::Tag {
-    iroh_blobs::Tag(format!("conversation/{}", base64_serialize(ticket).unwrap()).into())
+fn tag_conversation(ticket: &Ticket) -> iroh_blobs::api::Tag {
+    iroh_blobs::api::Tag(format!("conversation/{}", base64_serialize(ticket).unwrap()).into())
 }
 
-fn tag_message(ticket: &Ticket) -> iroh_blobs::Tag {
-    iroh_blobs::Tag(format!("message/{}", base64_serialize(ticket).unwrap()).into())
+fn tag_message(ticket: &Ticket) -> iroh_blobs::api::Tag {
+    iroh_blobs::api::Tag(format!("message/{}", base64_serialize(ticket).unwrap()).into())
 }
 
-fn tag_data(ticket: &Ticket) -> iroh_blobs::Tag {
-    iroh_blobs::Tag(format!("data/{}", base64_serialize(ticket).unwrap()).into())
-}
-
-fn tag_tmp() -> iroh_blobs::Tag {
-    iroh_blobs::Tag("TMP".into())
+fn tag_data(ticket: &Ticket) -> iroh_blobs::api::Tag {
+    iroh_blobs::api::Tag(format!("data/{}", base64_serialize(ticket).unwrap()).into())
 }

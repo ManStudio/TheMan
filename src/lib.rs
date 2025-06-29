@@ -5,7 +5,6 @@ use iroh::metrics::EndpointMetrics;
 use iroh::{NodeId, SecretKey, endpoint::RemoteInfo, protocol::Router};
 pub mod protocol;
 use iroh_blobs::Hash;
-type Store = iroh_blobs::store::fs::Store;
 use media_man::{
     CodecAudioOpus, CodecAudioRaw, CodecVideoHEVC, CodecVideoRaw, TCodecAudio, TCodecVideo,
 };
@@ -17,7 +16,7 @@ use tokio::sync::mpsc::{
     UnboundedReceiver as Receiver, UnboundedSender as Sender, unbounded_channel as channel,
 };
 use tokio::sync::oneshot::{Receiver as OReceiver, Sender as OSender, channel as ochannel};
-use tracing::{error, info, warn};
+use tracing::{error, info, trace_span, warn};
 
 mod command;
 use command::{Command, CommandAuto, CommandData};
@@ -102,7 +101,7 @@ enum ServiceRequest {
 }
 
 struct TheManService {
-    protocol: ProtocolTheMan<iroh_blobs::store::fs::Store>,
+    protocol: ProtocolTheMan,
     node_id: NodeId,
     message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
     receiver: tokio::sync::mpsc::Receiver<ServiceRequest>,
@@ -122,11 +121,12 @@ struct TheManService {
 
 impl TheManService {
     pub fn new(
-        protocol: ProtocolTheMan<iroh_blobs::store::fs::Store>,
+        protocol: ProtocolTheMan,
         node_id: NodeId,
         message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
         receiver: tokio::sync::mpsc::Receiver<ServiceRequest>,
     ) -> Self {
+        trace_span!("TheManService::new");
         let mut audio_codecs = Vec::<Box<dyn TCodecAudio>>::default();
         audio_codecs.push(Box::new(CodecAudioRaw));
         if let Some(opus) = CodecAudioOpus::new() {
@@ -185,6 +185,7 @@ impl TheManService {
         self.protocol.add_stream_sender(stream_sender).await;
 
         loop {
+            trace_span!("TheManService::tick");
             let message_receiver = {
                 let mut i = 0;
                 self.message_receiver.wait_for(move |v| {
@@ -646,9 +647,9 @@ impl TheManService {
                         base64_serialize(&conversation_id).unwrap()
                     ),
                     task: tokio::spawn(async move {
-                        struct DropConversation(ConversationHandle<Store>, u32, u16);
+                        struct DropConversation(ConversationHandle, u32, u16);
                         impl std::ops::Deref for DropConversation {
-                            type Target = ConversationHandle<Store>;
+                            type Target = ConversationHandle;
 
                             fn deref(&self) -> &Self::Target {
                                 &self.0
@@ -754,7 +755,7 @@ impl TheManService {
                         base64_serialize(&conversation_id).unwrap()
                     ),
                     task: tokio::spawn(async move {
-                        struct DropConversation(ProtocolTheMan<Store>, Hash, u32);
+                        struct DropConversation(ProtocolTheMan, Hash, u32);
 
                         impl Drop for DropConversation {
                             fn drop(&mut self) {
@@ -841,7 +842,7 @@ impl TheManService {
                         base64_serialize(&conversation_id).unwrap()
                     ),
                     task: tokio::spawn(async move {
-                        struct DropConversation(ProtocolTheMan<Store>, Hash, u32);
+                        struct DropConversation(ProtocolTheMan, Hash, u32);
 
                         impl Drop for DropConversation {
                             fn drop(&mut self) {
@@ -1188,7 +1189,7 @@ impl TheManService {
 pub struct TheMan {
     node: Router,
     gossip: iroh_gossip::net::Gossip,
-    protocol: ProtocolTheMan<iroh_blobs::store::fs::Store>,
+    protocol: ProtocolTheMan,
     message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
     sender: tokio::sync::mpsc::Sender<ServiceRequest>,
 
@@ -1213,15 +1214,12 @@ impl TheMan {
             .await
             .unwrap();
 
-        let gossip = iroh_gossip::net::Gossip::builder()
-            .spawn(endpoint.clone())
+        let gossip = iroh_gossip::net::Gossip::builder().spawn(endpoint.clone());
+
+        let fs_store = iroh_blobs::store::fs::FsStore::load(format!("{name}-store"))
             .await
             .unwrap();
-
-        let blobs = iroh_blobs::net_protocol::Blobs::persistent(format!("{name}-store"))
-            .await
-            .expect("Cannot create store")
-            .build(&endpoint);
+        let blobs = iroh_blobs::net_protocol::Blobs::new(&fs_store, endpoint.clone(), None);
 
         let sender = tokio::sync::watch::Sender::<Option<Message>>::new(None);
         let message_receiver = sender.subscribe();
@@ -1272,10 +1270,7 @@ impl TheMan {
         self.protocol.get_message(hash).await
     }
 
-    pub async fn get_conversation(
-        &self,
-        hash: iroh_blobs::Hash,
-    ) -> Option<ConversationHandle<iroh_blobs::store::fs::Store>> {
+    pub async fn get_conversation(&self, hash: iroh_blobs::Hash) -> Option<ConversationHandle> {
         self.protocol.get_conversation(hash).await
     }
 
@@ -1283,10 +1278,7 @@ impl TheMan {
         self.protocol.raw_conversations().await
     }
 
-    pub async fn create(
-        &self,
-        raw: RawConversation,
-    ) -> Option<ConversationHandle<iroh_blobs::store::fs::Store>> {
+    pub async fn create(&self, raw: RawConversation) -> Option<ConversationHandle> {
         self.protocol.create(raw).await
     }
 
