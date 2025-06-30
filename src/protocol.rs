@@ -1,8 +1,8 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     future::Future,
     pin::Pin,
-    sync::{Arc, Weak},
+    sync::Arc,
 };
 
 use chrono::Utc;
@@ -163,7 +163,7 @@ impl Ticket {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawMessage {
-    pub last: Option<Ticket>,
+    pub prev: Option<Ticket>,
     pub time: Time,
     pub conversation: Ticket,
     pub data: String,
@@ -174,7 +174,7 @@ impl bincode::Encode for RawMessage {
         &self,
         encoder: &mut E,
     ) -> Result<(), bincode::error::EncodeError> {
-        bincode::Encode::encode(&self.last, encoder)?;
+        bincode::Encode::encode(&self.prev, encoder)?;
         bincode::Encode::encode(&self.time.timestamp(), encoder)?;
         bincode::Encode::encode(&self.time.timestamp_subsec_nanos(), encoder)?;
         bincode::Encode::encode(&self.conversation, encoder)?;
@@ -195,7 +195,7 @@ impl<Context> bincode::Decode<Context> for RawMessage {
         let data = <String as bincode::Decode<Context>>::decode(decoder)?;
 
         Ok(Self {
-            last,
+            prev: last,
             time: Time::from_timestamp(time_s, time_nanos).unwrap(),
             conversation,
             data,
@@ -249,110 +249,149 @@ impl<Context> bincode::Decode<Context> for RawConversation {
     }
 }
 
-#[derive(Debug)]
-pub struct TreeEntry {
-    prev: RwLock<Option<Arc<TreeEntry>>>,
-    hash: Hash,
-    nexts: RwLock<Vec<Weak<TreeEntry>>>,
+#[derive(Default, Clone)]
+pub struct Messages {
+    registry: HashMap<Hash, MessageEntry>,
 }
 
-impl TreeEntry {
-    pub async fn back_find(self: &Arc<Self>, hash: Hash) -> Option<(usize, Arc<TreeEntry>)> {
-        let mut depth = 0;
-        let mut prev = Some(self.clone());
-
-        while let Some(this) = prev.take() {
-            if this.hash == hash {
-                return Some((depth, this));
-            }
-
-            prev = this.prev.read().await.clone();
-            depth += 1;
+impl Messages {
+    pub fn insert(&mut self, message: &Message) {
+        let mut nexts = HashSet::default();
+        if let Some(entry) = self.registry.remove(&message.ticket.hash()) {
+            nexts = entry.nexts;
         }
 
-        None
+        self.registry.insert(
+            message.ticket.hash(),
+            MessageEntry {
+                ticket: message.ticket.clone(),
+                message: Some(message.raw.clone()),
+                nexts,
+            },
+        );
+
+        if let Some(prev) = &message.raw.prev {
+            let entry = self
+                .registry
+                .entry(prev.hash())
+                .or_insert_with(|| MessageEntry {
+                    ticket: prev.clone(),
+                    message: None,
+                    nexts: <_>::default(),
+                });
+            entry.nexts.insert(message.ticket.hash());
+        }
     }
 
-    pub async fn prev(&self) -> Option<Arc<TreeEntry>> {
-        self.prev.read().await.clone()
+    pub fn insert_empty(&mut self, ticket: Ticket) {
+        self.registry.insert(
+            ticket.hash(),
+            MessageEntry {
+                ticket,
+                message: None,
+                nexts: <_>::default(),
+            },
+        );
     }
 
-    pub fn blocking_prev(&self) -> Option<Arc<TreeEntry>> {
-        self.prev.blocking_read().clone()
+    pub fn remove(&mut self, hash: &Hash) -> Option<MessageEntry> {
+        let entry = self.registry.remove(hash)?;
+        if let Some(raw) = &entry.message {
+            if let Some(prev) = &raw.prev {
+                if let Some(prev) = self.registry.get_mut(&prev.hash()) {
+                    prev.nexts.remove(hash);
+                }
+            }
+        }
+        Some(entry)
     }
 
-    pub async fn next(&self) -> Option<Arc<TreeEntry>> {
-        self.nexts
-            .read()
-            .await
-            .first()
-            .and_then(|entry| entry.upgrade())
+    pub fn contains(&mut self, hash: &Hash) -> bool {
+        if let Some(entry) = self.registry.get(hash) {
+            return entry.message.is_some();
+        }
+        false
     }
 
-    pub fn blocking_next(&self) -> Option<Arc<TreeEntry>> {
-        self.nexts
-            .blocking_read()
-            .first()
-            .and_then(|entry| entry.upgrade())
+    pub fn get(&mut self, hash: &Hash) -> Option<Message> {
+        self.registry.get(hash).and_then(|entry| {
+            entry.message.as_ref().map(|raw| Message {
+                ticket: entry.ticket.clone(),
+                raw: raw.clone(),
+            })
+        })
     }
 
-    pub fn hash(&self) -> Hash {
-        self.hash
+    pub fn tails(&mut self) -> Vec<Ticket> {
+        let mut tails = Vec::default();
+
+        for entry in self.registry.values() {
+            if entry.nexts.is_empty() {
+                tails.push(entry.ticket.clone());
+            }
+        }
+
+        tails
     }
+
+    pub fn heads(&mut self) -> Vec<Ticket> {
+        let mut heads = Vec::default();
+
+        for entry in self.registry.values() {
+            let Some(raw) = &entry.message else { continue };
+            if raw.prev.is_none() {
+                heads.push(entry.ticket.clone());
+            }
+        }
+
+        heads
+    }
+
+    pub fn tails_for<'a>(&mut self, hashes: impl Iterator<Item = &'a Hash>) -> Vec<Ticket> {
+        let mut tails = Vec::default();
+
+        for hash in hashes {
+            let Some(entry) = self.registry.get(hash) else {
+                continue;
+            };
+            if entry.nexts.is_empty() {
+                tails.push(entry.ticket.clone());
+            }
+        }
+
+        tails
+    }
+
+    pub fn heads_for<'a>(&mut self, hashes: impl Iterator<Item = &'a Hash>) -> Vec<Ticket> {
+        let mut heads = Vec::default();
+
+        for hash in hashes {
+            let Some(entry) = self.registry.get(hash) else {
+                continue;
+            };
+            let Some(raw) = &entry.message else { continue };
+            if raw.prev.is_none() {
+                heads.push(entry.ticket.clone());
+            }
+        }
+
+        heads
+    }
+}
+
+#[derive(Clone)]
+pub struct MessageEntry {
+    ticket: Ticket,
+    message: Option<RawMessage>,
+    nexts: HashSet<Hash>,
 }
 
 #[derive(Clone)]
 pub struct Conversation {
     pub raw: RawConversation,
     pub ticket: Ticket,
-    pub tails: Vec<Arc<TreeEntry>>,
-}
-
-impl Conversation {
-    pub async fn add_message(&mut self, hash: Hash, last: Option<Hash>) {
-        if let Some(last) = last {
-            'adding: {
-                for tail in self.tails.iter_mut() {
-                    let Some((depth, last)) = tail.back_find(last).await.clone() else {
-                        continue;
-                    };
-
-                    let entry = Arc::new(TreeEntry {
-                        prev: RwLock::new(Some(last.clone())),
-                        hash,
-                        nexts: RwLock::default(),
-                    });
-
-                    last.nexts.write().await.push(Arc::downgrade(&entry));
-                    if depth == 0 {
-                        *tail = entry;
-                    } else {
-                        self.tails.push(entry);
-                    }
-
-                    break 'adding;
-                }
-
-                error!("The last entry cannot be found");
-
-                let entry = Arc::new(TreeEntry {
-                    prev: RwLock::new(None),
-                    hash,
-                    nexts: RwLock::default(),
-                });
-
-                self.tails.push(entry);
-            }
-        } else {
-            let entry = Arc::new(TreeEntry {
-                prev: RwLock::new(None),
-                hash,
-                nexts: RwLock::default(),
-            });
-
-            self.tails.push(entry);
-        }
-    }
+    pub messages: HashSet<Hash>,
+    pub tails: Vec<Ticket>,
 }
 
 #[derive(Debug, Clone)]
@@ -473,7 +512,9 @@ enum ServiceRequest {
     Create(RawConversation, oneshot::Sender<Option<Hash>>),
     List(oneshot::Sender<Vec<Hash>>),
     GetMessage(Hash, oneshot::Sender<Option<Message>>),
-    GetConversation(Hash, oneshot::Sender<Option<Conversation>>),
+    GetMessageNexts(Hash, oneshot::Sender<Vec<Hash>>),
+    GetConversation(Hash, oneshot::Sender<Option<(Ticket, RawConversation)>>),
+    GetConversationTails(Hash, oneshot::Sender<Vec<Ticket>>),
     Send(RawMessage, u16, oneshot::Sender<Option<Hash>>),
     Recover(Ticket),
     RequestMessageSubscription(oneshot::Sender<watch::Receiver<Option<Message>>>),
@@ -507,7 +548,7 @@ struct TheManService {
     blobs: iroh_blobs::net_protocol::Blobs,
     endpoint: iroh::Endpoint,
 
-    messages: BTreeMap<Hash, Message>,
+    messages: Messages,
     dead_messages: BTreeSet<Hash>,
 
     conversations: BTreeMap<Hash, Conversation>,
@@ -606,7 +647,8 @@ impl TheManService {
                     Conversation {
                         raw,
                         ticket,
-                        tails: vec![],
+                        messages: <_>::default(),
+                        tails: <_>::default(),
                     },
                 );
 
@@ -616,7 +658,7 @@ impl TheManService {
 
             let mut skip = false;
             for ticket in std::mem::take(&mut messages_to_add) {
-                if self.messages.contains_key(&ticket.hash()) {
+                if self.messages.contains(&ticket.hash()) {
                     continue;
                 }
 
@@ -678,8 +720,8 @@ impl TheManService {
                     continue;
                 }
 
-                if let Some(last) = raw.last.clone() {
-                    if !self.messages.contains_key(&last.hash())
+                if let Some(last) = raw.prev.clone() {
+                    if !self.messages.contains(&last.hash())
                         && !self.dead_messages.contains(&last.hash())
                     {
                         messages_to_add.push(last);
@@ -689,17 +731,15 @@ impl TheManService {
                     }
                 }
 
-                conversation
-                    .add_message(ticket.hash(), raw.last.as_ref().map(|ticket| ticket.hash()))
-                    .await;
-
                 debug!(
                     "Added message: {}",
                     base64_serialize(&ticket.hash()).unwrap()
                 );
 
                 let message = Message { raw, ticket };
-                self.messages.insert(message.ticket.hash(), message.clone());
+                self.messages.insert(&message);
+                conversation.messages.insert(message.ticket.hash());
+                conversation.tails = Vec::default();
                 _ = self.message_sender.send(Some(message));
             }
         }
@@ -731,6 +771,7 @@ impl TheManService {
                     "Cannot download: {}, {err}",
                     base64_serialize(&ticket.hash()).unwrap()
                 );
+                return None;
             }
         }
 
@@ -918,7 +959,8 @@ impl TheManService {
                     Conversation {
                         raw: raw_conversation,
                         ticket: ticket.clone(),
-                        tails: vec![],
+                        messages: <_>::default(),
+                        tails: <_>::default(),
                     },
                 );
 
@@ -950,18 +992,59 @@ impl TheManService {
                 };
             }
 
+            ServiceRequest::GetMessageNexts(hash, sender) => {
+                let Some(entry) = self.messages.registry.get(&hash) else {
+                    if sender.send(Vec::default()).is_err() {
+                        error!("Cannot send");
+                    }
+                    return;
+                };
+
+                let Ok(_) = sender.send(entry.nexts.iter().cloned().collect()) else {
+                    error!("Cannot send");
+                    return;
+                };
+            }
+
             ServiceRequest::GetConversation(hash, sender) => {
-                let Some(conversations) = self.conversations.get(&hash) else {
+                let Some(conversation) = self.conversations.get_mut(&hash) else {
                     if sender.send(None).is_err() {
                         error!("Cannot send");
                     }
                     return;
                 };
 
-                let Ok(_) = sender.send(Some(conversations.clone())) else {
+                if sender
+                    .send(Some((
+                        conversation.ticket.clone(),
+                        conversation.raw.clone(),
+                    )))
+                    .is_err()
+                {
                     error!("Cannot send");
+                }
+            }
+
+            ServiceRequest::GetConversationTails(hash, sender) => {
+                let Some(conversation) = self.conversations.get_mut(&hash) else {
+                    if sender.send(Vec::default()).is_err() {
+                        error!("Cannot send");
+                    }
                     return;
                 };
+
+                if conversation.tails.is_empty() {
+                    let tails = self.messages.tails_for(conversation.messages.iter());
+                    conversation.tails = tails.clone();
+                    if sender.send(tails).is_err() {
+                        error!("Cannot send");
+                    }
+                    return;
+                }
+
+                if sender.send(conversation.tails.clone()).is_err() {
+                    error!("Cannot send");
+                }
             }
 
             ServiceRequest::Send(raw_message, ttl, sender) => {
@@ -1025,8 +1108,6 @@ impl TheManService {
                         .insert(ticket.hash(), TicketFor::Message);
                 }
 
-                let last = raw_message.last.as_ref().map(|ticket| ticket.hash());
-
                 let msg = Message {
                     raw: raw_message,
                     ticket: ticket.clone(),
@@ -1034,9 +1115,9 @@ impl TheManService {
 
                 _ = self.message_sender.send(Some(msg.clone()));
 
-                self.messages.insert(ticket.hash(), msg);
-
-                conversation.add_message(ticket.hash(), last).await;
+                self.messages.insert(&msg);
+                conversation.messages.insert(msg.ticket.hash());
+                conversation.tails = Vec::default();
 
                 if sender.send(Some(ticket.hash())).is_err() {
                     error!("Cannot send");
@@ -1170,9 +1251,10 @@ impl TheManService {
                         }
                     }
                     TicketFor::Message => {
-                        if let Some(msg) = self.messages.get_mut(&hash) {
+                        if let Some(mut msg) = self.messages.get(&hash) {
                             let last_ticket = msg.ticket.clone();
                             msg.ticket.ttl = ttl;
+                            self.messages.insert(&msg);
                             _ = self
                                 .blobs
                                 .store()
@@ -1284,6 +1366,7 @@ impl TheManService {
                     .connections
                     .get_mut(&node_id)
                     .expect("Welcome message but no connection, HOW????");
+
                 for conversation in self.conversations.values() {
                     if !conversation.raw.nodes.contains(&node_id) {
                         continue;
@@ -1294,18 +1377,11 @@ impl TheManService {
                         base64_serialize(&node_id).unwrap()
                     );
 
-                    for tail in conversation.tails.iter() {
-                        debug!("Sending tail: {}", base64_serialize(&tail.hash).unwrap());
+                    for tail in self.messages.tails_for(conversation.messages.iter()) {
+                        debug!("Sending tail: {}", base64_serialize(&tail.hash()).unwrap());
                         let mut buffer = Vec::new();
-                        let Some(msg) = self.messages.get(&tail.hash) else {
-                            error!(
-                                "Cannot send message entry because we don't have the message from the entry: {}",
-                                base64_serialize(&tail.hash).unwrap()
-                            );
-                            continue;
-                        };
                         bincode::encode_into_std_write(
-                            Packet::SendMessage(msg.ticket.clone()),
+                            Packet::SendMessage(tail),
                             &mut buffer,
                             bincode::config::standard(),
                         )
@@ -1402,7 +1478,7 @@ impl TheManService {
         self.tickets_to_delete.retain(|hash, f| {
             let ticket = match f {
                 TicketFor::Data => self.datas.get_mut(hash).unwrap().ticket(),
-                TicketFor::Message => &mut self.messages.get_mut(hash).unwrap().ticket,
+                TicketFor::Message => &mut self.messages.registry.get_mut(hash).unwrap().ticket,
             };
 
             if ticket.ttl == 1 {
@@ -1418,7 +1494,7 @@ impl TheManService {
         for (f, hash) in to_remove {
             let ticket = match f {
                 TicketFor::Data => self.datas.get_mut(&hash).unwrap().ticket(),
-                TicketFor::Message => &mut self.messages.get_mut(&hash).unwrap().ticket,
+                TicketFor::Message => &mut self.messages.registry.get_mut(&hash).unwrap().ticket,
             };
 
             match f {
@@ -1438,8 +1514,19 @@ impl TheManService {
                             "Cannot delete message: {err}, {}",
                             base64_serialize(&hash).unwrap()
                         );
-                    } else {
-                        _ = self.messages.remove(&hash).unwrap();
+                    } else if let Some(entry) = self.messages.remove(&hash) {
+                        if let Some(msg) = &entry.message {
+                            if let Some(conversation) =
+                                self.conversations.get_mut(&msg.conversation.hash())
+                            {
+                                conversation
+                                    .messages
+                                    .retain(|hash| *hash != entry.ticket.hash());
+                                conversation
+                                    .tails
+                                    .retain(|ticket| ticket.hash() != entry.ticket.hash());
+                            }
+                        }
                     }
                 }
             }
@@ -1448,7 +1535,7 @@ impl TheManService {
         for (hash, f) in self.tickets_to_delete.iter() {
             let ticket = match f {
                 TicketFor::Data => self.datas.get_mut(hash).unwrap().ticket(),
-                TicketFor::Message => &mut self.messages.get_mut(hash).unwrap().ticket,
+                TicketFor::Message => &mut self.messages.registry.get_mut(hash).unwrap().ticket,
             };
 
             match f {
@@ -1528,10 +1615,10 @@ impl ConversationHandle {
     }
 
     pub async fn ticket(&self) -> Ticket {
-        self.get().await.ticket
+        self.get().await.0
     }
 
-    pub async fn get(&self) -> Conversation {
+    pub async fn get(&self) -> (Ticket, RawConversation) {
         let (s, r) = oneshot::channel();
         self.inner
             .send_request(ServiceRequest::GetConversation(self.conversation, s))
@@ -1540,53 +1627,62 @@ impl ConversationHandle {
         r.await.unwrap().unwrap()
     }
 
+    pub async fn get_tails(&self) -> Vec<Ticket> {
+        let (s, r) = oneshot::channel();
+        self.inner
+            .send_request(ServiceRequest::GetConversationTails(self.conversation, s))
+            .await;
+
+        r.await.unwrap()
+    }
+
     pub fn set_last(&mut self, last: Ticket) {
         self.last = Some(last);
     }
 
-    pub async fn messages(&self) -> Vec<Message> {
-        let conversation = self.get().await;
-        let mut messages = Vec::default();
-        for ticket in conversation.tails.iter() {
-            let (s, r) = oneshot::channel();
-            self.inner
-                .send_request(ServiceRequest::GetMessage(ticket.hash(), s))
-                .await;
-            let msg = r.await.unwrap().unwrap();
-            messages.push(msg);
-        }
+    // pub async fn messages(&self) -> Vec<Message> {
+    //     let conversation = self.get().await;
+    //     let mut messages = Vec::default();
+    //     for ticket in conversation.tails.iter() {
+    //         let (s, r) = oneshot::channel();
+    //         self.inner
+    //             .send_request(ServiceRequest::GetMessage(ticket.hash(), s))
+    //             .await;
+    //         let msg = r.await.unwrap().unwrap();
+    //         messages.push(msg);
+    //     }
 
-        let mut i = 0;
-        loop {
-            let Some(message) = messages.get(i) else {
-                break;
-            };
-            if let Some(last) = message.raw.last.clone() {
-                if !messages.iter().any(|m| m.ticket == last) {
-                    let (s, r) = oneshot::channel();
-                    self.inner
-                        .send_request(ServiceRequest::GetMessage(last.hash(), s))
-                        .await;
-                    let msg = r.await.unwrap().unwrap();
-                    messages.push(msg);
-                }
-            }
-            i += 1;
-        }
+    //     let mut i = 0;
+    //     loop {
+    //         let Some(message) = messages.get(i) else {
+    //             break;
+    //         };
+    //         if let Some(last) = message.raw.prev.clone() {
+    //             if !messages.iter().any(|m| m.ticket == last) {
+    //                 let (s, r) = oneshot::channel();
+    //                 self.inner
+    //                     .send_request(ServiceRequest::GetMessage(last.hash(), s))
+    //                     .await;
+    //                 let msg = r.await.unwrap().unwrap();
+    //                 messages.push(msg);
+    //             }
+    //         }
+    //         i += 1;
+    //     }
 
-        messages.sort_by_key(|m| m.raw.time);
+    //     messages.sort_by_key(|m| m.raw.time);
 
-        messages
-    }
+    //     messages
+    // }
 
     pub async fn send(&mut self, msg: impl Into<String>, ttl: u16) {
-        let conversation = self.get().await.ticket;
+        let conversation = self.get().await.0;
         let (sender, receiver) = tokio::sync::oneshot::channel();
 
         self.inner
             .send_request(ServiceRequest::Send(
                 RawMessage {
-                    last: self.last.clone(),
+                    prev: self.last.clone(),
                     time: chrono::Utc::now(),
                     conversation,
                     data: msg.into(),
@@ -1695,7 +1791,7 @@ impl TheMan {
                     datas_to_resolv,
                     receiver,
                     downloader: blobs.store().downloader(&endpoint).clone(),
-                    messages: BTreeMap::default(),
+                    messages: Messages::default(),
                     conversations: BTreeMap::default(),
                     endpoint,
                     message_sender,
@@ -1777,6 +1873,15 @@ impl TheMan {
         let (s, r) = oneshot::channel();
         self.inner
             .send_request(ServiceRequest::GetMessage(hash, s))
+            .await;
+
+        r.await.unwrap()
+    }
+
+    pub async fn get_message_nexts(&self, hash: Hash) -> Vec<Hash> {
+        let (s, r) = oneshot::channel();
+        self.inner
+            .send_request(ServiceRequest::GetMessageNexts(hash, s))
             .await;
 
         r.await.unwrap()

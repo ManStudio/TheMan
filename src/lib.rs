@@ -363,7 +363,7 @@ impl TheManService {
                 if !conversation
                     .get()
                     .await
-                    .raw
+                    .1
                     .nodes
                     .contains(&message.ticket.owner_id)
                 {
@@ -1268,6 +1268,10 @@ impl TheMan {
 
     pub async fn get_message(&self, hash: iroh_blobs::Hash) -> Option<Message> {
         self.protocol.get_message(hash).await
+    }
+
+    pub async fn get_message_nexts(&self, hash: iroh_blobs::Hash) -> Vec<Hash> {
+        self.protocol.get_message_nexts(hash).await
     }
 
     pub async fn get_conversation(&self, hash: iroh_blobs::Hash) -> Option<ConversationHandle> {

@@ -1,9 +1,7 @@
-use std::sync::Arc;
-
 use iroh_blobs::Hash;
 use the_man::{
     base64_deserialize, base64_serialize,
-    protocol::{Message, RawMessage, TreeEntry},
+    protocol::{Message, RawMessage, Ticket },
 };
 use tokio::sync::oneshot;
 use tracing::{error, info};
@@ -15,26 +13,17 @@ use super::Pane;
 use eframe::egui;
 
 pub enum Entry {
-    Loading(Arc<TreeEntry>),
-    Node {
-        message: Message,
-        tree_entry: Arc<TreeEntry>,
-    },
+    Loading(Ticket),
+    Node { message: Message },
 }
 
 const MAX_PER_TAIL: usize = 100;
 
 impl Entry {
-    pub fn get_hash(&self) -> Hash {
+    pub fn ticket(&self) -> Ticket {
         match self {
-            Entry::Loading(tree_entry) => tree_entry.hash(),
-            Entry::Node { tree_entry, .. } => tree_entry.hash(),
-        }
-    }
-    pub fn tree_entry(&self) -> Arc<TreeEntry> {
-        match self {
-            Entry::Loading(tree_entry) => tree_entry.clone(),
-            Entry::Node { tree_entry, .. } => tree_entry.clone(),
+            Entry::Loading(ticket) => ticket.clone(),
+            Entry::Node { message } => message.ticket.clone(),
         }
     }
 }
@@ -47,10 +36,10 @@ pub struct PaneConversation {
 
     tails: Vec<Vec<Entry>>,
 
-    conversation: Option<the_man::protocol::Conversation>,
-    receive_conversation: Option<oneshot::Receiver<the_man::protocol::Conversation>>,
+    conversation: Option<the_man::protocol::RawConversation>,
+    receive_conversation: Option<oneshot::Receiver<the_man::protocol::RawConversation>>,
 
-    o_receiver_tails: Option<oneshot::Receiver<Vec<Arc<TreeEntry>>>>,
+    o_receiver_tails: Option<oneshot::Receiver<Vec<Ticket>>>,
     receivers_messages: Vec<oneshot::Receiver<Option<Message>>>,
 
     ttl: u16,
@@ -122,7 +111,7 @@ impl Pane for PaneConversation {
                     .get_conversation(conversation_id)
                     .await
                     .expect("Cannot get conversation");
-                _ = sender.send(handle.get().await);
+                _ = sender.send(handle.get().await.1);
             }));
             self.receive_conversation = Some(receiver);
 
@@ -162,9 +151,8 @@ impl Pane for PaneConversation {
                     .get_conversation(hash)
                     .await
                     .expect("Cannot find conversation")
-                    .get()
-                    .await
-                    .tails;
+                    .get_tails()
+                    .await;
                 _ = sender.send(tails);
             }));
 
@@ -184,10 +172,9 @@ impl Pane for PaneConversation {
 
             for tail in self.tails.iter_mut() {
                 for msg in tail {
-                    if msg.get_hash() == result.ticket.hash() {
+                    if msg.ticket().hash() == result.ticket.hash() {
                         *msg = Entry::Node {
                             message: result.clone(),
-                            tree_entry: msg.tree_entry(),
                         }
                     }
                 }
@@ -228,7 +215,7 @@ impl Pane for PaneConversation {
                             .show(ui, |ui| {
                                 ui.set_max_size(egui::Vec2::INFINITY);
                                 ui.horizontal(|ui| {
-                                    for node_id in conversation.raw.nodes.iter() {
+                                    for node_id in conversation.nodes.iter() {
                                         ui.vertical(|ui| {
                                             with_name(node_id, ui, context, account, |_|{});
                                             egui::ScrollArea::vertical()
@@ -349,7 +336,7 @@ impl Pane for PaneConversation {
                         };
                         the_man
                             .send_message(RawMessage {
-                                last,
+                                prev: last,
                                 time: chrono::Utc::now(),
                                 conversation: conversation.ticket().await,
                                 data,
@@ -382,29 +369,30 @@ impl Pane for PaneConversation {
                                         ui.vertical(|ui| {
                                             if sensor(ui) {
                                                 let first = tail.first().unwrap();
-                                                if let Some(prev) =
-                                                    first.tree_entry().blocking_prev()
+                                                if let Entry::Node{message} = &first
                                                 {
-                                                    ui.label("Getting the previous!");
-                                                    let (sender, receiver) = oneshot::channel();
-                                                    context.add_task(Box::pin(task_get_message(
-                                                        the_man.clone(),
-                                                        prev.hash(),
-                                                        sender,
-                                                    )));
-                                                    tail.insert(0, Entry::Loading(prev));
-                                                    if tail.len() > MAX_PER_TAIL {
-                                                        tail.drain(MAX_PER_TAIL..);
-                                                    }
+                                                    if let Some(prev) = &message.raw.prev {
+                                                        ui.label("Getting the previous!");
+                                                        let (sender, receiver) = oneshot::channel();
+                                                        context.add_task(Box::pin(task_get_message(
+                                                            the_man.clone(),
+                                                            prev.hash(),
+                                                            sender,
+                                                        )));
+                                                        tail.insert(0, Entry::Loading(prev.clone()));
+                                                        if tail.len() > MAX_PER_TAIL {
+                                                            tail.drain(MAX_PER_TAIL..);
+                                                        }
 
-                                                    self.receivers_messages.push(receiver);
+                                                        self.receivers_messages.push(receiver);
+                                                    }
                                                 }
                                             }
 
                                             for msg in tail.iter_mut() {
                                                 let mut selected = self
                                                     .selected
-                                                    .map(|hash| hash == msg.get_hash())
+                                                    .map(|hash| hash == msg.ticket().hash())
                                                     .unwrap_or(false);
                                                 let last_selected = selected;
 
@@ -476,7 +464,7 @@ impl Pane for PaneConversation {
                                                                             while !messages.is_empty(){
                                                                                 for hash in std::mem::take(&mut messages){
                                                                                     if let Some(msg) = the_man.get_message(hash).await{
-                                                                                        if let Some(last) = msg.raw.last{
+                                                                                        if let Some(last) = msg.raw.prev{
                                                                                             messages.push(last.hash());
                                                                                         }
                                                                                     }
@@ -504,13 +492,13 @@ impl Pane for PaneConversation {
                                                     }
 
                                                     if to_delete{
-                                                        *msg = Entry::Loading(msg.tree_entry());
+                                                        *msg = Entry::Loading(msg.ticket());
                                                     }
                                                 });
 
                                                 if selected != last_selected {
                                                     if selected {
-                                                        self.selected = Some(msg.get_hash());
+                                                        self.selected = Some(msg.ticket().hash());
                                                     } else if last_selected && !selected {
                                                         self.selected = None;
                                                     }
@@ -519,22 +507,23 @@ impl Pane for PaneConversation {
 
                                             if sensor(ui) {
                                                 let last = tail.last().unwrap();
-                                                if let Some(next) =
-                                                    last.tree_entry().blocking_next()
+                                                let msg = tokio::task::block_in_place(||{
+                                                    let the_man = the_man.clone();
+                                                     tokio::runtime::Handle::current().block_on(async move{
+                                                        let nexts = the_man.get_message_nexts(last.ticket().hash()).await;
+                                                        if let Some(hash) = nexts.first() {the_man.get_message(*hash).await}else{
+                                                            None
+                                                        }
+                                                        
+                                                    })
+                                                });
+                                                if let Some(message) = msg
                                                 {
                                                     ui.label("Getting next");
-                                                    let (sender, receiver) = oneshot::channel();
-                                                    context.add_task(Box::pin(task_get_message(
-                                                        the_man.clone(),
-                                                        next.hash(),
-                                                        sender,
-                                                    )));
-                                                    tail.push(Entry::Loading(next));
+                                                    tail.push(Entry::Node{message});
                                                     if tail.len() > MAX_PER_TAIL {
                                                         tail.drain(..tail.len() - MAX_PER_TAIL);
                                                     }
-
-                                                    self.receivers_messages.push(receiver);
                                                 }
                                             }
                                         });
