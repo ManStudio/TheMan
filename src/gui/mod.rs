@@ -125,12 +125,8 @@ pub struct Dashboard {
 
     destination_tile: egui_tiles::TileId,
 
-    message_receiver: Option<
-        oneshot::Receiver<(
-            Option<the_man::protocol::Message>,
-            watch::Receiver<Option<the_man::protocol::Message>>,
-        )>,
-    >,
+    message_receiver:
+        Option<tokio::sync::mpsc::UnboundedReceiver<Option<the_man::protocol::Message>>>,
 }
 
 impl Dashboard {
@@ -181,19 +177,16 @@ impl Dashboard {
 
     fn show(&mut self, ui: &mut egui::Ui, context: &mut Context, data: &mut Data) {
         if self.message_receiver.is_none() {
-            let message_subscriber = self.the_man.subscribe_messages();
-            let (sender, receiver) = oneshot::channel();
-            context.add_task(Box::pin(task_message_receiver(message_subscriber, sender)));
+            let message_receiver = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(self.the_man.subscribe_messages())
+            });
 
-            self.message_receiver = Some(receiver);
+            self.message_receiver = Some(message_receiver);
         }
 
         if let Some(message_receiver) = &mut self.message_receiver {
-            if let Ok((msg, message_subscriber)) = message_receiver.try_recv() {
+            while let Ok(msg) = message_receiver.try_recv() {
                 context.conversation_refreshes += 1;
-                let (sender, receiver) = oneshot::channel();
-                context.add_task(Box::pin(task_message_receiver(message_subscriber, sender)));
-                self.message_receiver = Some(receiver);
             }
         }
 
@@ -252,18 +245,19 @@ impl Dashboard {
 }
 
 async fn task_message_receiver(
-    mut message_subscriber: watch::Receiver<Option<the_man::protocol::Message>>,
+    mut message_subscriber: tokio::sync::mpsc::UnboundedReceiver<
+        Option<the_man::protocol::Message>,
+    >,
     mut sender: oneshot::Sender<(
         Option<the_man::protocol::Message>,
-        watch::Receiver<Option<the_man::protocol::Message>>,
+        tokio::sync::mpsc::UnboundedReceiver<Option<the_man::protocol::Message>>,
     )>,
 ) {
     tokio::select! {
         _ = sender.closed() => {
 
         },
-        _ = message_subscriber.changed() => {
-            let msg = message_subscriber.borrow().clone();
+        Some(msg) = message_subscriber.recv() => {
             _ = sender.send((msg, message_subscriber));
         }
     }

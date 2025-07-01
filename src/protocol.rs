@@ -19,8 +19,8 @@ use iroh_blobs::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::{
     Mutex, RwLock,
-    mpsc::{Receiver, Sender, UnboundedSender},
-    oneshot, watch,
+    mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender},
+    oneshot,
 };
 use tracing::{debug, error, info, info_span, trace, warn};
 
@@ -517,7 +517,7 @@ enum ServiceRequest {
     GetConversationTails(Hash, oneshot::Sender<Vec<Ticket>>),
     Send(RawMessage, u16, oneshot::Sender<Option<Hash>>),
     Recover(Ticket),
-    RequestMessageSubscription(oneshot::Sender<watch::Receiver<Option<Message>>>),
+    RequestMessageSubscription(oneshot::Sender<UnboundedReceiver<Option<Message>>>),
     Add(Connection, (SendStream, RecvStream)),
 
     Get(Ticket, oneshot::Sender<Option<Arc<[u8]>>>),
@@ -542,7 +542,7 @@ struct TheManService {
     datas_to_resolv: Vec<Ticket>,
 
     connections: BTreeMap<NodeId, Conn>,
-    message_sender: watch::Sender<Option<Message>>,
+    message_senders: Vec<UnboundedSender<Option<Message>>>,
     receiver: Receiver<ServiceRequest>,
     downloader: iroh_blobs::api::downloader::Downloader,
     blobs: iroh_blobs::net_protocol::Blobs,
@@ -653,7 +653,8 @@ impl TheManService {
                 );
 
                 debug!("Conversation added");
-                _ = self.message_sender.send(None);
+                self.message_senders
+                    .retain(|sender| sender.send(None).is_ok());
             }
 
             let mut skip = false;
@@ -740,7 +741,8 @@ impl TheManService {
                 self.messages.insert(&message);
                 conversation.messages.insert(message.ticket.hash());
                 conversation.tails = Vec::default();
-                _ = self.message_sender.send(Some(message));
+                self.message_senders
+                    .retain(|sender| sender.send(Some(message.clone())).is_ok());
             }
         }
     }
@@ -953,6 +955,7 @@ impl TheManService {
                     .set(tag_conversation(&ticket), ticket.hash_and_format)
                     .await
                     .unwrap();
+                _ = self.blobs.store().tags().delete(res.name).await;
 
                 self.conversations.insert(
                     ticket.hash(),
@@ -967,7 +970,8 @@ impl TheManService {
                 if sender.send(Some(ticket.hash())).is_err() {
                     error!("Cannot send");
                 }
-                _ = self.message_sender.send(None);
+                self.message_senders
+                    .retain(|sender| sender.send(None).is_ok());
             }
 
             ServiceRequest::List(sender) => {
@@ -1113,7 +1117,8 @@ impl TheManService {
                     ticket: ticket.clone(),
                 };
 
-                _ = self.message_sender.send(Some(msg.clone()));
+                self.message_senders
+                    .retain(|sender| sender.send(Some(msg.clone())).is_ok());
 
                 self.messages.insert(&msg);
                 conversation.messages.insert(msg.ticket.hash());
@@ -1156,9 +1161,12 @@ impl TheManService {
             }
 
             ServiceRequest::RequestMessageSubscription(sender) => {
-                if let Err(err) = sender.send(self.message_sender.subscribe()) {
+                let (_sender, receiver) = tokio::sync::mpsc::unbounded_channel::<Option<Message>>();
+                if let Err(err) = sender.send(receiver) {
                     error!("Cannot send subscription receiver! {err:?}");
+                    return;
                 }
+                self.message_senders.push(_sender);
             }
 
             ServiceRequest::Get(ticket, sender) => {
@@ -1739,7 +1747,7 @@ impl TheMan {
     pub async fn spawn(
         blobs: Blobs,
         endpoint: Endpoint,
-        message_sender: watch::Sender<Option<Message>>,
+        message_sender: Option<UnboundedSender<Option<Message>>>,
     ) -> Self {
         let mut messages_to_resolv = Vec::new();
         let mut conversations_to_resolv = Vec::new();
@@ -1781,6 +1789,11 @@ impl TheMan {
 
         let (sender, receiver) = tokio::sync::mpsc::channel(16);
 
+        let mut message_senders = Vec::default();
+        if let Some(message_sender) = message_sender {
+            message_senders.push(message_sender);
+        }
+
         let task = {
             let blobs = blobs.clone();
             let endpoint = endpoint.clone();
@@ -1794,7 +1807,7 @@ impl TheMan {
                     messages: Messages::default(),
                     conversations: BTreeMap::default(),
                     endpoint,
-                    message_sender,
+                    message_senders,
                     connections: BTreeMap::new(),
                     datas: BTreeMap::default(),
                     blobs,
@@ -1887,7 +1900,7 @@ impl TheMan {
         r.await.unwrap()
     }
 
-    pub async fn subscribe_messages(&self) -> watch::Receiver<Option<Message>> {
+    pub async fn subscribe_messages(&self) -> UnboundedReceiver<Option<Message>> {
         let (s, r) = oneshot::channel();
         self.inner
             .send_request(ServiceRequest::RequestMessageSubscription(s))

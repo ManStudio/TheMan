@@ -120,7 +120,8 @@ impl Pane for PaneConversation {
 
         if let Some(mut receiver_tails) = self.o_receiver_tails.take() {
             if let Ok(tails) = receiver_tails.try_recv() {
-                for tail in tails.into_iter().skip(self.tails.len()) {
+                self.tails.clear();
+                for tail in tails {
                     self.tails.push(vec![Entry::Loading(tail.clone())]);
 
                     let (sender, receiver) = oneshot::channel();

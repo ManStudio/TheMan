@@ -43,9 +43,9 @@ impl Pane for PaneConversations {
         }
 
         if self.conversations_receiver.is_none()
-            && context.conversation_refreshes != self.conversation_refreshes
+            && context.conversation_refreshes + 1 != self.conversation_refreshes
         {
-            self.conversation_refreshes = context.conversation_refreshes;
+            self.conversation_refreshes = context.conversation_refreshes + 1;
             let (sender, receiver) = oneshot::channel();
             context.add_task(Box::pin(task_get_conversations(the_man.clone(), sender)));
             self.conversations_receiver = Some(receiver);

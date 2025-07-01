@@ -103,7 +103,7 @@ enum ServiceRequest {
 struct TheManService {
     protocol: ProtocolTheMan,
     node_id: NodeId,
-    message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
+    message_receiver: tokio::sync::mpsc::UnboundedReceiver<Option<Message>>,
     receiver: tokio::sync::mpsc::Receiver<ServiceRequest>,
 
     platform: Box<dyn platform::TPlatform + Send + Sync + 'static>,
@@ -123,7 +123,7 @@ impl TheManService {
     pub fn new(
         protocol: ProtocolTheMan,
         node_id: NodeId,
-        message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
+        message_receiver: tokio::sync::mpsc::UnboundedReceiver<Option<Message>>,
         receiver: tokio::sync::mpsc::Receiver<ServiceRequest>,
     ) -> Self {
         trace_span!("TheManService::new");
@@ -186,14 +186,6 @@ impl TheManService {
 
         loop {
             trace_span!("TheManService::tick");
-            let message_receiver = {
-                let mut i = 0;
-                self.message_receiver.wait_for(move |v| {
-                    let res = v.is_some() && i > 0;
-                    i += 1;
-                    res
-                })
-            };
 
             let mut tasks = Vec::new();
 
@@ -294,16 +286,15 @@ impl TheManService {
                         self.out_streams.remove(&id);
                     }
                 }
-                event = async {
-                    message_receiver.await.map(|res|res.clone())
-                } => {
+                event = self.message_receiver.recv()
+                 => {
                     match event{
-                        Ok(Some(message)) => {
+                        Some(Some(message)) => {
                             if let Ok(command) = Command::from_str(&message.raw.data) {
                                 self.handle_command(message, command).await;
                             }
                         },
-                        Err(err) => {
+                        None => {
                             static LAST_TIME: Mutex<Option<std::time::Instant>> = Mutex::const_new(None);
                             let mut last_time = LAST_TIME.lock().await;
                             let mut show = false;
@@ -315,7 +306,7 @@ impl TheManService {
                                 show = true;
                             }
                             if show{
-                                error!("Cannot receive message from the the-man service. {err}");
+                                error!("Cannot receive message from the the-man service.");
                                 *last_time = Some(std::time::Instant::now());
                             }
 
@@ -1190,7 +1181,6 @@ pub struct TheMan {
     node: Router,
     gossip: iroh_gossip::net::Gossip,
     protocol: ProtocolTheMan,
-    message_receiver: tokio::sync::watch::Receiver<Option<Message>>,
     sender: tokio::sync::mpsc::Sender<ServiceRequest>,
 
     task: Arc<tokio::task::JoinHandle<()>>,
@@ -1221,10 +1211,9 @@ impl TheMan {
             .unwrap();
         let blobs = iroh_blobs::net_protocol::Blobs::new(&fs_store, endpoint.clone(), None);
 
-        let sender = tokio::sync::watch::Sender::<Option<Message>>::new(None);
-        let message_receiver = sender.subscribe();
+        let (sender, message_receiver) = tokio::sync::mpsc::unbounded_channel::<Option<Message>>();
 
-        let protocol = protocol::TheMan::spawn(blobs.clone(), endpoint.clone(), sender).await;
+        let protocol = protocol::TheMan::spawn(blobs.clone(), endpoint.clone(), Some(sender)).await;
 
         println!("NodeId: {}", base64_serialize(&endpoint.node_id()).unwrap());
 
@@ -1232,7 +1221,6 @@ impl TheMan {
         let task = {
             let protocol = protocol.clone();
             let node_id = endpoint.node_id();
-            let message_receiver = message_receiver.clone();
             tokio::spawn(async move {
                 let mut service = TheManService::new(protocol, node_id, message_receiver, receiver);
                 service.setup();
@@ -1253,13 +1241,14 @@ impl TheMan {
             protocol,
             task: Arc::new(task),
 
-            message_receiver,
             sender,
         }
     }
 
-    pub fn subscribe_messages(&self) -> tokio::sync::watch::Receiver<Option<Message>> {
-        self.message_receiver.clone()
+    pub async fn subscribe_messages(
+        &self,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<Option<Message>> {
+        self.protocol.subscribe_messages().await
     }
 
     pub async fn send_message(&self, raw: protocol::RawMessage) -> Option<iroh_blobs::Hash> {
