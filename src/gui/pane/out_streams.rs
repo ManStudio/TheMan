@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use super::Pane;
 
@@ -81,6 +81,86 @@ impl Pane for PaneOutStreams {
                                         );
                                     });
                             }
+                            if ui.button("Open Preview Window").clicked() {
+                                struct WindowTest {
+                                    should_close: bool,
+                                    receiver: platform::Receiver<(u32, u32, Arc<[u8]>)>,
+                                    texture: Option<egui::TextureHandle>,
+                                    id: usize,
+                                }
+                                impl crate::gui::Window for WindowTest {
+                                    fn builder(&self) -> egui::ViewportBuilder {
+                                        egui::ViewportBuilder::default()
+                                    }
+                                    fn show(&mut self, ctx: &egui::Context) {
+                                        if ctx.input(|i| i.viewport().close_requested()) {
+                                            self.should_close = true
+                                        }
+                                        ctx.request_repaint();
+                                        egui::CentralPanel::default().show(ctx, |ui| {
+                                            let mut last = None;
+                                            while let Some(some) = self.receiver.try_recv() {
+                                                last = Some(some)
+                                            }
+
+                                            if self.receiver.is_closed() {
+                                                self.should_close = true;
+                                            }
+
+                                            if let Some((width, height, bytes)) = last {
+                                                let color_image =
+                                                    egui::ColorImage::from_rgba_unmultiplied(
+                                                        [width as usize, height as usize],
+                                                        &bytes,
+                                                    );
+                                                let texture = ui.ctx().load_texture(
+                                                    format!("video_stream: preview {}", self.id),
+                                                    color_image,
+                                                    egui::TextureOptions::LINEAR,
+                                                );
+                                                self.texture = Some(texture);
+                                            }
+                                            if let Some(texture) = &self.texture {
+                                                let (rect, _) = ui.allocate_exact_size(
+                                                    ui.available_size(),
+                                                    egui::Sense::empty(),
+                                                );
+
+                                                egui::paint_texture_at(
+                                                    ui.painter(),
+                                                    rect,
+                                                    &egui::ImageOptions::default(),
+                                                    &egui::load::SizedTexture::from_handle(texture),
+                                                );
+                                            }
+                                        });
+                                    }
+                                    fn should_close(&self) -> bool {
+                                        self.should_close
+                                    }
+                                }
+
+                                let (sender, receiver) = platform::channel();
+                                tokio::task::block_in_place(|| {
+                                    tokio::runtime::Handle::current().block_on(async {
+                                        let new_id = the_man
+                                            .input_stream_video_create(
+                                                "Preview window",
+                                                tokio::spawn(std::future::pending()),
+                                                sender,
+                                            )
+                                            .await;
+                                        the_man.output_stream_connect(id, new_id).await;
+                                    });
+                                });
+
+                                context.add_window(WindowTest {
+                                    should_close: false,
+                                    receiver,
+                                    texture: None,
+                                    id,
+                                })
+                            }
                             ui.heading("Connections");
                             for connection in connections.iter() {
                                 if ui
@@ -97,7 +177,7 @@ impl Pane for PaneOutStreams {
                                 }
                             }
 
-                            egui::menu::menu_button(ui, "Connect", |ui| {
+                            ui.menu_button("Connect", |ui| {
                                 for input in inputs.iter() {
                                     if ui
                                         .small_button(format!(

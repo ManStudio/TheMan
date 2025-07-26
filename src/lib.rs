@@ -97,6 +97,13 @@ enum ServiceRequest {
     OutputStreamConnect(usize, usize),
     OutputStreamDisconnect(usize, usize),
 
+    CreateInputVideo(
+        String,
+        tokio::task::JoinHandle<()>,
+        platform::Sender<(u32, u32, Arc<[u8]>)>,
+        OSender<usize>,
+    ),
+
     ScreenShare,
 }
 
@@ -215,16 +222,34 @@ impl TheManService {
                 }
             }
 
-            for (_, in_stream) in self.in_streams.iter_mut() {
-                match in_stream {
-                    StreamIN::Audio { task, .. } => {
-                        if !task.is_finished() {
-                            tasks.push(task)
+            {
+                let mut to_remove = Vec::new();
+                for (id, in_stream) in self.in_streams.iter_mut() {
+                    match in_stream {
+                        StreamIN::Audio { task, sender, .. } => {
+                            if task.is_finished() || sender.is_closed() {
+                                to_remove.push(*id);
+                            }
+                        }
+                        StreamIN::Video { task, sender, .. } => {
+                            if task.is_finished() || sender.is_closed() {
+                                to_remove.push(*id);
+                            }
                         }
                     }
-                    StreamIN::Video { task, .. } => {
-                        if !task.is_finished() {
-                            tasks.push(task)
+                }
+
+                for to_remove in to_remove {
+                    self.in_streams.remove(&to_remove);
+                }
+
+                for (_, in_stream) in self.in_streams.iter_mut() {
+                    match in_stream {
+                        StreamIN::Audio { task, .. } => {
+                            tasks.push(task);
+                        }
+                        StreamIN::Video { task, .. } => {
+                            tasks.push(task);
                         }
                     }
                 }
@@ -241,7 +266,7 @@ impl TheManService {
                 }
 
                 ((Some(sample), inputs), _, _) = async {if audio_receivers.is_empty() {std::future::pending().await} else{ futures_util::future::select_all(audio_receivers).await}} => {
-                    for input in inputs{
+                    inputs.retain(|input|{
                         if let Some(stream) = self.in_streams.get(input){
                             match stream{
                                 StreamIN::Audio { sender, .. } => {
@@ -251,12 +276,14 @@ impl TheManService {
                                     warn!("Video Input connected to Audio Output");
                                 }
                             }
+                            return true;
                         }
-                    }
+                        false
+                    })
                 }
                 ((o_frame, inputs, id), _, _) = async {if video_receivers.is_empty() {std::future::pending().await} else{ futures_util::future::select_all(video_receivers).await}} => {
                     if let Some(frame) = o_frame{
-                        for input in inputs{
+                        inputs.retain(|input|{
                             if let Some(stream) = self.in_streams.get(input){
                                 match stream{
                                     StreamIN::Audio { .. } => {
@@ -266,8 +293,10 @@ impl TheManService {
                                         sender.send(frame.clone());
                                     }
                                 }
+                                return true;
                             }
-                        }
+                            false
+                        });
 
                         if let Some(stream) = self.out_streams.get_mut(&id){
                             match &mut stream.0{
@@ -959,6 +988,11 @@ impl TheManService {
                 }
             }
 
+            ServiceRequest::CreateInputVideo(name, task, sender, _sender) => {
+                let id = self.add_input_stream(StreamIN::Video { name, task, sender });
+                _ = _sender.send(id);
+            }
+
             ServiceRequest::ScreenShare => {
                 self.platform.start_screen_share();
             }
@@ -1387,6 +1421,25 @@ impl TheMan {
         let (sender, receiver) = ochannel();
         self.sender
             .send(ServiceRequest::InputStreams(sender))
+            .await
+            .unwrap();
+        receiver.await.unwrap()
+    }
+
+    pub async fn input_stream_video_create(
+        &self,
+        name: impl Into<String>,
+        task: tokio::task::JoinHandle<()>,
+        sender: platform::Sender<(u32, u32, Arc<[u8]>)>,
+    ) -> usize {
+        let (_sender, receiver) = ochannel();
+        self.sender
+            .send(ServiceRequest::CreateInputVideo(
+                name.into(),
+                task,
+                sender,
+                _sender,
+            ))
             .await
             .unwrap();
         receiver.await.unwrap()

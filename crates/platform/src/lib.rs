@@ -11,6 +11,10 @@ impl<T> Sender<T> {
     pub fn send(&self, value: T) {
         _ = self.inner.send(value);
     }
+
+    pub fn is_closed(&self) -> bool {
+        self.inner.is_closed()
+    }
 }
 
 pub struct Receiver<T> {
@@ -23,7 +27,11 @@ impl<T> Receiver<T> {
     }
 
     pub fn try_recv(&mut self) -> Option<T> {
-        return self.inner.try_recv().ok();
+        self.inner.try_recv().ok()
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.inner.is_closed()
     }
 }
 

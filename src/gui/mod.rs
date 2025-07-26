@@ -1,11 +1,14 @@
-use std::{future::Future, pin::Pin};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, atomic::AtomicBool},
+};
 
 use eframe::egui;
 use iroh::SecretKey;
 use iroh_blobs::Hash;
-use popup::Popup;
 use the_man::base64_deserialize;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{RwLock, mpsc, oneshot, watch};
 use tracing::info;
 
 use crate::{Account, Data};
@@ -20,9 +23,12 @@ use pane::{
     Pane, PaneActive, PaneConversations, PaneKnownNodes, PaneMetrics, PaneOutStreams, PaneStatus,
 };
 
-pub mod popup;
-
 pub mod component;
+pub mod popup;
+pub mod window;
+
+use popup::Popup;
+use window::Window;
 
 pub struct Context {
     receiver: mpsc::Receiver<Event>,
@@ -34,6 +40,7 @@ pub struct Context {
     conversation_refreshes: usize,
     tabs: Vec<Box<dyn Pane>>,
     popups: Vec<Box<dyn Popup>>,
+    windows: Vec<Box<dyn Window>>,
 }
 
 impl Context {
@@ -49,6 +56,10 @@ impl Context {
 
     pub fn add_popup(&mut self, popup: impl Popup + 'static) {
         self.popups.push(Box::new(popup));
+    }
+
+    pub fn add_window(&mut self, window: impl Window + 'static) {
+        self.windows.push(Box::new(window));
     }
 }
 
@@ -121,7 +132,14 @@ pub struct Dashboard {
     account_id: usize,
     tree: egui_tiles::Tree<Box<dyn Pane>>,
     popups: Vec<(u32, Box<dyn Popup>)>,
+    windows: Vec<(
+        u32,
+        Arc<RwLock<Box<dyn Window>>>,
+        egui::ViewportBuilder,
+        Arc<AtomicBool>,
+    )>,
     next_popup: u32,
+    next_window: u32,
 
     destination_tile: egui_tiles::TileId,
 
@@ -171,7 +189,9 @@ impl Dashboard {
             destination_tile: right,
             message_receiver: None,
             popups: Default::default(),
+            windows: Default::default(),
             next_popup: 0,
+            next_window: 0,
         }
     }
 
@@ -189,6 +209,25 @@ impl Dashboard {
                 context.conversation_refreshes += 1;
             }
         }
+
+        self.windows
+            .retain(|(id, window, viewport_builder, _should_close)| {
+                let window = window.clone();
+                let should_close = _should_close.clone();
+                ui.ctx().show_viewport_deferred(
+                    egui::ViewportId::from_hash_of(("window", id)),
+                    viewport_builder.clone(),
+                    move |ctx, _| {
+                        let Ok(mut window) = window.try_write() else {
+                            return;
+                        };
+                        window.show(ctx);
+                        should_close
+                            .store(window.should_close(), std::sync::atomic::Ordering::Release);
+                    },
+                );
+                !_should_close.load(std::sync::atomic::Ordering::Acquire)
+            });
 
         self.popups.retain_mut(|(id, popup)| {
             let mut close = false;
@@ -226,6 +265,17 @@ impl Dashboard {
         for new_popup in std::mem::take(&mut context.popups) {
             self.popups.push((self.next_popup, new_popup));
             self.next_popup += 1;
+        }
+
+        for new_window in std::mem::take(&mut context.windows) {
+            let viewport_builder = new_window.builder();
+            self.windows.push((
+                self.next_window,
+                Arc::new(RwLock::from(new_window)),
+                viewport_builder,
+                Arc::new(AtomicBool::new(false)),
+            ));
+            self.next_window += 1;
         }
 
         if context.should_save {
@@ -322,6 +372,7 @@ impl App {
                 conversation_refreshes: 0,
                 tabs: Default::default(),
                 popups: Default::default(),
+                windows: Default::default(),
                 should_save: false,
             },
             data,
