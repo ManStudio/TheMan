@@ -1213,7 +1213,7 @@ impl TheManService {
 #[derive(Clone)]
 pub struct TheMan {
     node: Router,
-    gossip: iroh_gossip::net::Gossip,
+    // gossip: iroh_gossip::net::Gossip,
     protocol: ProtocolTheMan,
     sender: tokio::sync::mpsc::Sender<ServiceRequest>,
 
@@ -1238,12 +1238,12 @@ impl TheMan {
             .await
             .unwrap();
 
-        let gossip = iroh_gossip::net::Gossip::builder().spawn(endpoint.clone());
+        // let gossip = iroh_gossip::net::Gossip::builder().spawn(endpoint.clone());
 
         let fs_store = iroh_blobs::store::fs::FsStore::load(format!("{name}-store"))
             .await
             .unwrap();
-        let blobs = iroh_blobs::net_protocol::Blobs::new(&fs_store, endpoint.clone(), None);
+        let blobs = iroh_blobs::BlobsProtocol::new(&fs_store, endpoint.clone(), None);
 
         let (sender, message_receiver) = tokio::sync::mpsc::unbounded_channel::<Option<Message>>();
 
@@ -1264,14 +1264,14 @@ impl TheMan {
 
         info!("Create node");
         let node = iroh::protocol::Router::builder(endpoint)
-            .accept(iroh_gossip::ALPN, gossip.clone())
+            // .accept(iroh_gossip::ALPN, gossip.clone())
             .accept(iroh_blobs::ALPN, blobs.clone())
             .accept(protocol::ALPN, protocol.clone())
             .spawn();
 
         TheMan {
             node,
-            gossip,
+            // gossip,
             protocol,
             task: Arc::new(task),
 

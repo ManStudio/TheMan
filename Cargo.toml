@@ -22,9 +22,9 @@ chrono = { version = "0.4.41", features = ["serde"] }
 ciborium = "0.2.2"
 ed25519 = { version = "2.2.3", features = ["serde", "serde_bytes"] }
 futures-util = "0.3.31"
-iroh = "0.90"
-iroh-blobs = { version = "0.90", features = [] }
-iroh-gossip = { version = "0.90", features = ["rpc"] }
+iroh = "0.91"
+iroh-blobs = { version = "0.93", features = [] }
+#iroh-gossip = { version = "0.90", features = ["rpc"] }
 media-man = { path = "crates/media-man", features = [
   "codec-opus",
   "codec-raw",
@@ -60,7 +60,7 @@ base64 = { workspace = true }
 tokio = { workspace = true }
 iroh = { workspace = true }
 iroh-blobs = { workspace = true }
-iroh-gossip = { workspace = true }
+#iroh-gossip = { workspace = true }
 media-man = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }

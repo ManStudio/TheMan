@@ -14,7 +14,7 @@ use iroh::{
     protocol::{AcceptError, ProtocolHandler},
 };
 use iroh_blobs::{
-    BlobFormat, Hash, HashAndFormat, api::downloader::DownloadRequest, net_protocol::Blobs,
+    BlobFormat, BlobsProtocol, Hash, HashAndFormat, api::downloader::DownloadRequest,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{
@@ -470,7 +470,7 @@ pub enum LazyData {
 }
 
 impl LazyData {
-    pub async fn get(&mut self, blobs: &iroh_blobs::net_protocol::Blobs) -> Option<Arc<[u8]>> {
+    pub async fn get(&mut self, blobs: &iroh_blobs::BlobsProtocol) -> Option<Arc<[u8]>> {
         match self {
             LazyData::ToLoad(ticket) => match blobs.store().get_bytes(ticket.hash()).await {
                 Ok(data) => {
@@ -545,7 +545,7 @@ struct TheManService {
     message_senders: Vec<UnboundedSender<Option<Message>>>,
     receiver: Receiver<ServiceRequest>,
     downloader: iroh_blobs::api::downloader::Downloader,
-    blobs: iroh_blobs::net_protocol::Blobs,
+    blobs: iroh_blobs::BlobsProtocol,
     endpoint: iroh::Endpoint,
 
     messages: Messages,
@@ -717,7 +717,7 @@ impl TheManService {
                         base64_serialize(&raw.conversation.hash()).unwrap(),
                         base64_serialize(&ticket).unwrap()
                     );
-                    _ = self.blobs.store().delete([ticket.hash()]).await;
+                    _ = self.blobs.store().tags().delete(ticket.hash()).await;
                     continue;
                 }
 
@@ -1720,7 +1720,7 @@ impl ConversationHandle {
 struct Inner {
     pub sender: RwLock<Option<Sender<ServiceRequest>>>,
     #[allow(unused)]
-    pub blobs: Blobs,
+    pub blobs: BlobsProtocol,
 }
 
 impl Inner {
@@ -1745,7 +1745,7 @@ pub struct TheMan {
 
 impl TheMan {
     pub async fn spawn(
-        blobs: Blobs,
+        blobs: BlobsProtocol,
         endpoint: Endpoint,
         message_sender: Option<UnboundedSender<Option<Message>>>,
     ) -> Self {
