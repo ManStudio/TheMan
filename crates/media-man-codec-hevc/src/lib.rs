@@ -17,8 +17,6 @@ struct PacketData {
     side_datas: Arc<[(std::ffi::c_uint, Arc<[u8]>)]>,
     duration: i64,
     pos: i64,
-    time_base_num: std::ffi::c_int,
-    time_base_den: std::ffi::c_int,
 }
 
 impl PacketData {
@@ -52,60 +50,39 @@ impl PacketData {
             side_datas: side_datas.into(),
             duration: packet.duration,
             pos: packet.pos,
-            time_base_num: packet.time_base.num,
-            time_base_den: packet.time_base.den,
         }
     }
 
     pub fn to_av_packet(&self) -> rsmpeg::avcodec::AVPacket {
         let mut packet = rsmpeg::avcodec::AVPacket::new();
 
+        unsafe { rsmpeg::ffi::av_new_packet(packet.as_mut_ptr(), self.data.len() as i32) };
+        unsafe {
+            std::slice::from_raw_parts_mut(packet.data, self.data.len()).copy_from_slice(&self.data)
+        };
         packet.set_pts(self.pts);
         packet.set_dts(self.dts);
-
-        let data = unsafe { rsmpeg::ffi::av_malloc(self.data.len()) };
-        unsafe {
-            std::slice::from_raw_parts_mut(data as *mut u8, self.data.len())
-                .copy_from_slice(&self.data)
-        };
-
-        unsafe {
-            rsmpeg::ffi::av_packet_from_data(
-                packet.as_mut_ptr(),
-                data as *mut u8,
-                self.data.len() as i32,
-            )
-        };
 
         packet.set_stream_index(self.stream_index);
         packet.set_flags(self.flags);
 
         for side_data in self.side_datas.iter() {
             unsafe {
-                let data = rsmpeg::ffi::av_malloc(side_data.1.len());
-                std::slice::from_raw_parts_mut(data as *mut u8, side_data.1.len())
-                    .copy_from_slice(&side_data.1);
-                rsmpeg::ffi::av_packet_side_data_add(
-                    &packet.side_data as *const _ as *mut _,
-                    &packet.side_data_elems as *const _ as *mut _,
+                let data = rsmpeg::ffi::av_packet_new_side_data(
+                    packet.as_mut_ptr(),
                     side_data.0,
-                    data,
                     side_data.1.len(),
-                    0,
                 );
+                if data.is_null() {
+                    panic!("NULLPTR")
+                }
+                std::slice::from_raw_parts_mut(data, side_data.1.len())
+                    .copy_from_slice(&side_data.1);
             }
         }
 
         packet.set_duration(self.duration);
         packet.set_pos(self.pos);
-        unsafe {
-            (&packet.time_base as *const _ as *mut rsmpeg::ffi::AVRational).write(
-                rsmpeg::ffi::AVRational {
-                    num: self.time_base_num,
-                    den: self.time_base_den,
-                },
-            )
-        };
 
         packet
     }
@@ -178,14 +155,13 @@ impl TEncoderVideo for VideoEncoder {
             eprintln!("Long Name: {:?}", codec.long_name());
 
             let mut ctx = rsmpeg::avcodec::AVCodecContext::new(&codec);
-            ctx.set_bit_rate(400000);
+            ctx.set_bit_rate(800000 * 10);
             ctx.set_width(1920);
             ctx.set_height(1080);
             ctx.set_pix_fmt(rsmpeg::ffi::AV_PIX_FMT_YUV444P);
-            ctx.set_max_b_frames(3);
             ctx.set_time_base(rsmpeg::ffi::AVRational { num: 1, den: 60 });
+            ctx.set_pkt_timebase(rsmpeg::ffi::AVRational { num: 1, den: 60 });
             ctx.set_framerate(rsmpeg::ffi::AVRational { num: 60, den: 1 });
-            ctx.set_gop_size(60 * 2);
             if ctx.open(None).is_ok() {
                 self.context = Some(ctx);
             }
@@ -211,7 +187,7 @@ impl TEncoderVideo for VideoEncoder {
                 rsmpeg::ffi::AV_PIX_FMT_RGBA,
                 frame.width as i32,
                 frame.height as i32,
-                rsmpeg::ffi::AV_PIX_FMT_YUV444P,
+                ff_frame.format,
                 0,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
@@ -219,8 +195,8 @@ impl TEncoderVideo for VideoEncoder {
             );
             rsmpeg::ffi::sws_scale(
                 sws_ctx,
-                &[frame.data.as_ptr()] as *const _,
-                &((frame.width * 4) as i32),
+                &[&frame.data[..]] as *const _ as *const _,
+                &[frame.width as i32 * 4] as *const _,
                 0,
                 frame.height as i32,
                 ff_frame.data_mut() as *const _,
@@ -341,7 +317,7 @@ impl TDecoderVideo for VideoDecoder {
                 rsmpeg::ffi::sws_getContext(
                     frame.width,
                     frame.height,
-                    rsmpeg::ffi::AV_PIX_FMT_YUV444P,
+                    frame.format,
                     frame.width,
                     frame.height,
                     rsmpeg::ffi::AV_PIX_FMT_RGBA,
